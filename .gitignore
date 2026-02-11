@@ -24,6 +24,8 @@ pnpm-debug.log*
 # Logs and runtime files
 *.log
 backend_logs.txt
+backend/celerybeat-schedule
+frontend/build_log.txt
 
 # Environment files
 .env
@@ -35,3 +37,4 @@ backend_logs.txt
 
 # Large local artifacts
 project_backup.zip
+*.bak

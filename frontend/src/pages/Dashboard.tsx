@@ -1,9 +1,17 @@
-/**
- * Dashboard - Main overview page with live data from compressor system
- * Updated for Phase 7: Uses UnitContext for multi-unit support
- */
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+    Bar,
+    BarChart,
+    CartesianGrid,
+    Line,
+    LineChart,
+    ReferenceLine,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis
+} from 'recharts';
 import { useDataStore } from '../store/useDataStore';
 import { useUnit } from '../contexts/UnitContext';
 import { fetchLiveData, createWebSocket } from '../lib/api';
@@ -27,6 +35,56 @@ const ENGINE_STATES: Record<number, { label: string; color: string }> = {
     64: { label: 'SHUTDOWN', color: 'bg-red-500' },
     255: { label: 'FAULT', color: 'bg-red-600 animate-pulse' },
 };
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+}
+
+function asNumber(value: any, fallback = 0): number {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function computeHealthScore(liveData: any): number {
+    let score = 100;
+
+    const eop = asNumber(liveData?.engine_oil_press, 0);
+    if (eop < 35) score -= 18;
+    else if (eop < 45) score -= 8;
+
+    const eot = asNumber(liveData?.engine_oil_temp, 0);
+    if (eot > 225) score -= 16;
+    else if (eot > 205) score -= 8;
+
+    const jwt = asNumber(liveData?.jacket_water_temp, 0);
+    if (jwt > 205) score -= 14;
+    else if (jwt > 190) score -= 6;
+
+    const exhaustSpread = asNumber(liveData?.exhaust_spread, 0);
+    if (exhaustSpread > 90) score -= 16;
+    else if (exhaustSpread > 65) score -= 8;
+
+    const state = String(liveData?.engine_state_label || 'UNKNOWN').toUpperCase();
+    if (state === 'FAULT' || state === 'UNKNOWN') score -= 24;
+    else if (state === 'STOPPED') score -= 10;
+
+    const alarmCount = Array.isArray(liveData?.active_alarms) ? liveData.active_alarms.length : 0;
+    score -= Math.min(24, alarmCount * 8);
+
+    if (liveData?.timestamp) {
+        const age = (Date.now() - new Date(liveData.timestamp).getTime()) / 1000;
+        if (age > 20) score -= 12;
+        else if (age > 8) score -= 6;
+    }
+
+    return clamp(Math.round(score), 0, 100);
+}
+
+function healthTone(score: number): { ring: string; text: string; label: string; badge: string } {
+    if (score >= 85) return { ring: '#10b981', text: 'text-emerald-300', label: 'Healthy', badge: 'bg-emerald-500/20 text-emerald-200 border-emerald-400/35' };
+    if (score >= 65) return { ring: '#f59e0b', text: 'text-amber-300', label: 'Watch', badge: 'bg-amber-500/20 text-amber-200 border-amber-400/35' };
+    return { ring: '#ef4444', text: 'text-rose-300', label: 'Critical', badge: 'bg-rose-500/20 text-rose-200 border-rose-400/35' };
+}
 
 export function Dashboard() {
     const navigate = useNavigate();
@@ -74,29 +132,21 @@ export function Dashboard() {
             ws.onclose = () => {
                 wsActive = false;
                 setWsConnected(false);
-                if (isMounted) {
-                    reconnectTimer = setTimeout(connectWebSocket, 2000);
-                }
+                if (isMounted) reconnectTimer = setTimeout(connectWebSocket, 2000);
             };
         };
 
         const fetchData = async () => {
-            // WebSocket stream is primary; poll only as fallback.
             if (wsActive) return;
             try {
                 const data = await fetchLiveData(unitId);
                 applyLiveData(data);
             } catch (e: any) {
-                // Keep last good data to avoid UI flicker on transient request failures.
-                if (!hasReceivedData) {
-                    setError(`Failed to fetch data: ${e?.message || e}`);
-                }
+                if (!hasReceivedData) setError(`Failed to fetch data: ${e?.message || e}`);
             }
         };
 
         fetchData();
-
-        // Poll less aggressively, WebSocket remains primary.
         pollTimer = setInterval(fetchData, 2000);
         connectWebSocket();
 
@@ -136,25 +186,48 @@ export function Dashboard() {
     if (!liveData) return null;
 
     const engineState = ENGINE_STATES[liveData.engine_state] || { label: 'UNKNOWN', color: 'bg-slate-500' };
-    
-    // Cast to any to access sources
     const sources = (liveData as any).sources || {};
+    const getQuality = (param: string): any => sources[param] || 'LIVE';
 
-    // Helper to get quality for a parameter
-    const getQuality = (param: string): any => {
-        return sources[param] || 'LIVE';
-    };
+    const health = computeHealthScore(liveData);
+    const tone = healthTone(health);
+
+    const stages = Array.isArray(liveData.stages) ? liveData.stages : [];
+
+    const pressureProfile = stages.map((stage: any) => ({
+        stage: `S${stage.stage}`,
+        suction: asNumber(stage.suction_press),
+        discharge: asNumber(stage.discharge_press),
+    }));
+
+    const thermalProfile = stages.map((stage: any) => ({
+        stage: `S${stage.stage}`,
+        actual: asNumber(stage.discharge_temp),
+        ideal: asNumber(stage.ideal_temp),
+    }));
+
+    const controlProfile = [
+        { axis: 'Suction', value: asNumber(liveData.suction_valve_pct), target: 70 },
+        { axis: 'Speed', value: asNumber(liveData.speed_control_pct), target: 65 },
+        { axis: 'Recycle', value: asNumber(liveData.recycle_valve_pct), target: 22 },
+    ];
+
+    const riskItems: string[] = [];
+    if (asNumber(liveData.engine_oil_press) < 40) riskItems.push('Engine oil pressure below preferred operating band');
+    if (asNumber(liveData.engine_oil_temp) > 205) riskItems.push('Engine oil temperature elevated');
+    if (asNumber(liveData.jacket_water_temp) > 195) riskItems.push('Jacket water temperature trending high');
+    if (asNumber(liveData.exhaust_spread) > 70) riskItems.push('Exhaust spread indicates uneven cylinder load');
+    if (!riskItems.length) riskItems.push('No immediate risk signatures from current live envelope');
 
     return (
-        <div className="min-h-screen p-6">
-            {/* Header */}
-            <header className="mb-8">
-                <div className="flex items-center justify-between">
+        <div className="min-h-screen p-6 pb-8">
+            <header className="mb-7 rounded-2xl border border-slate-700/60 bg-gradient-to-r from-slate-900 via-slate-900 to-cyan-950/50 p-5 md:p-6 relative overflow-hidden">
+                <div className="absolute -right-20 -top-16 h-56 w-56 rounded-full bg-cyan-500/15 blur-3xl" />
+                <div className="absolute -left-10 -bottom-12 h-44 w-44 rounded-full bg-violet-500/10 blur-3xl" />
+                <div className="relative flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
                     <div>
-                        <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
-                            GCS Digital Twin
-                        </h1>
-                        <p className="text-slate-400 mt-1">Unit: {unitId}</p>
+                        <h1 className="text-3xl font-bold text-white">Compressor Health Cockpit</h1>
+                        <p className="text-slate-300 mt-1">Unit {unitId} operational clarity with pressure, thermal, and control health context.</p>
                         <div className="flex gap-2 mt-3 flex-wrap">
                             {units.map((unit, index) => (
                                 <button
@@ -176,140 +249,183 @@ export function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-6">
-                        {/* Legend for Quality */}
+                    <div className="flex flex-wrap items-center gap-4 md:gap-6">
                         <div className="flex items-center gap-3 text-xs text-slate-400 bg-slate-800/50 px-3 py-1.5 rounded-full border border-slate-700">
-                            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> Live</span>
-                            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500"></div> Manual</span>
+                            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-500" />Live</span>
+                            <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" />Manual</span>
                         </div>
 
-                        {/* Connection status */}
                         <div className="flex items-center gap-2">
                             <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                            <span className="text-sm text-slate-400">
-                                {wsConnected ? 'WebSocket' : 'Polling'}
-                            </span>
+                            <span className="text-sm text-slate-300">{wsConnected ? 'WebSocket' : 'Polling'}</span>
                         </div>
 
-                        {/* Engine state badge */}
-                        <div className={`px-4 py-2 rounded-full ${engineState.color} text-white font-semibold shadow-lg`}>
-                            {engineState.label}
-                        </div>
+                        <div className={`px-3 py-1.5 rounded-full ${engineState.color} text-white text-sm font-semibold`}>{engineState.label}</div>
 
-                        {/* Hour meter */}
-                        <div className="text-right">
-                            <span className="text-xs text-slate-400">Hour Meter</span>
-                            <div className="text-xl font-mono text-white">{liveData.hour_meter?.toFixed(1) || 'N/A'}</div>
-                        </div>
-
-                        {/* Timestamp */}
-                        <div className="text-right">
-                            <span className="text-xs text-slate-400">Last Update</span>
-                            <div className="text-sm text-slate-300">
-                                {new Date(liveData.timestamp).toLocaleTimeString()}
+                        <div className="relative h-16 w-16 rounded-full" style={{ background: `conic-gradient(${tone.ring} ${health * 3.6}deg, rgba(51,65,85,0.65) 0deg)` }}>
+                            <div className="absolute inset-[6px] rounded-full bg-slate-950/95 flex flex-col items-center justify-center">
+                                <span className={`text-sm font-semibold ${tone.text}`}>{health}</span>
+                                <span className="text-[9px] text-slate-400">HEALTH</span>
                             </div>
                         </div>
                     </div>
                 </div>
             </header>
 
-            {/* Engine & Compressor Vitals Row */}
-            <section className="mb-6">
-                <h2 className="text-lg font-semibold text-slate-300 mb-4">Engine & Compressor Vitals</h2>
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    <MetricCard
-                        title="Engine RPM"
-                        value={liveData.engine_rpm}
-                        unit="RPM"
-                        icon="⚙️"
-                        status="normal"
-                        quality={getQuality('engine_rpm')}
-                    />
-                    <MetricCard
-                        title="Engine Oil Pressure"
-                        value={liveData.engine_oil_press}
-                        unit="PSIG"
-                        icon="🛢️"
-                        status={liveData.engine_oil_press < 40 ? 'warning' : 'normal'}
-                        quality={getQuality('engine_oil_press')}
-                    />
-                    <MetricCard
-                        title="Engine Oil Temp"
-                        value={liveData.engine_oil_temp}
-                        unit="°F"
-                        icon="🌡️"
-                        status={liveData.engine_oil_temp > 200 ? 'warning' : 'normal'}
-                        quality={getQuality('engine_oil_temp')}
-                    />
-                    <MetricCard
-                        title="Jacket Water"
-                        value={liveData.jacket_water_temp}
-                        unit="°F"
-                        icon="💧"
-                        status={liveData.jacket_water_temp > 200 ? 'warning' : 'normal'}
-                        quality={getQuality('jacket_water_temp')}
-                    />
-                    <MetricCard
-                        title="Comp Oil Pressure"
-                        value={liveData.comp_oil_press}
-                        unit="PSIG"
-                        icon="🛢️"
-                        quality={getQuality('comp_oil_press')}
-                    />
-                    <MetricCard
-                        title="Comp Oil Temp"
-                        value={liveData.comp_oil_temp}
-                        unit="°F"
-                        icon="🌡️"
-                        quality={getQuality('comp_oil_temp')}
-                    />
+            <section className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-5 mb-6">
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-semibold text-slate-100">Live Operating Snapshot</h2>
+                        <div className={`px-2.5 py-1 rounded-md border text-xs ${tone.badge}`}>{tone.label} Integrity</div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <MetricCard title="Engine RPM" value={liveData.engine_rpm} unit="RPM" icon="⚙️" status="normal" quality={getQuality('engine_rpm')} />
+                        <MetricCard
+                            title="Engine Oil Pressure"
+                            value={liveData.engine_oil_press}
+                            unit="PSIG"
+                            icon="🛢️"
+                            status={asNumber(liveData.engine_oil_press) < 40 ? 'warning' : 'normal'}
+                            quality={getQuality('engine_oil_press')}
+                        />
+                        <MetricCard
+                            title="Engine Oil Temp"
+                            value={liveData.engine_oil_temp}
+                            unit="°F"
+                            icon="🌡️"
+                            status={asNumber(liveData.engine_oil_temp) > 205 ? 'warning' : 'normal'}
+                            quality={getQuality('engine_oil_temp')}
+                        />
+                        <MetricCard
+                            title="Jacket Water"
+                            value={liveData.jacket_water_temp}
+                            unit="°F"
+                            icon="💧"
+                            status={asNumber(liveData.jacket_water_temp) > 195 ? 'warning' : 'normal'}
+                            quality={getQuality('jacket_water_temp')}
+                        />
+                        <MetricCard title="Comp Oil Pressure" value={liveData.comp_oil_press} unit="PSIG" icon="🛢️" quality={getQuality('comp_oil_press')} />
+                        <MetricCard title="Comp Oil Temp" value={liveData.comp_oil_temp} unit="°F" icon="🌡️" quality={getQuality('comp_oil_temp')} />
+                    </div>
                 </div>
-            </section>
 
-            {/* Compression Stages */}
-            <section className="mb-6">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-slate-300">Compression Stages</h2>
-                    <div className="flex items-center gap-4">
-                        <div className="text-right">
-                            <span className="text-xs text-slate-400">Overall Ratio</span>
-                            <div className="text-2xl font-bold text-purple-400">{liveData.overall_ratio}</div>
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <h2 className="text-lg font-semibold text-slate-100 mb-4">Risk Radar</h2>
+                    <div className="space-y-2">
+                        {riskItems.map((risk, idx) => (
+                            <div
+                                key={`${risk}-${idx}`}
+                                className={`rounded-lg border px-3 py-2 text-sm ${idx === 0 && riskItems.length > 1
+                                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                                    : 'border-slate-700/60 bg-slate-900/60 text-slate-300'}`}
+                            >
+                                {risk}
+                            </div>
+                        ))}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 mt-4">
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3">
+                            <div className="text-[11px] text-slate-500">Overall Ratio</div>
+                            <div className="text-xl font-semibold text-violet-300">{asNumber(liveData.overall_ratio).toFixed(2)}</div>
                         </div>
-                        <div className="text-right">
-                            <span className="text-xs text-slate-400">Total BHP</span>
-                            <div className="text-2xl font-bold text-cyan-400">{liveData.total_bhp}</div>
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3">
+                            <div className="text-[11px] text-slate-500">Total BHP</div>
+                            <div className="text-xl font-semibold text-cyan-300">{asNumber(liveData.total_bhp).toFixed(0)}</div>
+                        </div>
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3">
+                            <div className="text-[11px] text-slate-500">Hour Meter</div>
+                            <div className="text-lg font-semibold text-slate-100">{asNumber(liveData.hour_meter).toFixed(1)}</div>
+                        </div>
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3">
+                            <div className="text-[11px] text-slate-500">Last Update</div>
+                            <div className="text-sm font-semibold text-slate-100">{new Date(liveData.timestamp).toLocaleTimeString()}</div>
                         </div>
                     </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {liveData.stages?.map((stage: any) => (
-                        <StageCard key={stage.stage} data={stage} />
-                    )) || <div className="text-slate-400">No stage data available</div>}
+            </section>
+
+            <section className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-6">
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <h2 className="text-lg font-semibold text-slate-100 mb-3">Pressure Ladder by Stage</h2>
+                    <div className="h-56">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={pressureProfile} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                                <XAxis dataKey="stage" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
+                                <Bar dataKey="suction" fill="#22d3ee" radius={[6, 6, 0, 0]} />
+                                <Bar dataKey="discharge" fill="#818cf8" radius={[6, 6, 0, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <h2 className="text-lg font-semibold text-slate-100 mb-3">Thermal Delta Lens</h2>
+                    <div className="h-56">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={thermalProfile} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                                <XAxis dataKey="stage" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
+                                <ReferenceLine y={350} stroke="#f97316" strokeDasharray="4 4" />
+                                <Line type="monotone" dataKey="actual" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} />
+                                <Line type="monotone" dataKey="ideal" stroke="#38bdf8" strokeWidth={2} dot={{ r: 2 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </div>
                 </div>
             </section>
 
-            {/* Exhaust Temps, Bearings, Controls - abbreviated for brevity */}
             <section className="mb-6">
-                <h2 className="text-lg font-semibold text-slate-300 mb-4">System Status</h2>
-                <div className="glass-card p-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div className="text-center">
+                <h2 className="text-lg font-semibold text-slate-300 mb-4">Compression Stage Detail</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+                    {stages.map((stage: any) => (
+                        <StageCard key={stage.stage} data={stage} />
+                    ))}
+                    {!stages.length && <div className="text-slate-400">No stage data available</div>}
+                </div>
+            </section>
+
+            <section className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-5">
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <h2 className="text-lg font-semibold text-slate-100 mb-3">Control Envelope</h2>
+                    <div className="h-56">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart data={controlProfile} layout="vertical" margin={{ top: 8, right: 20, left: 20, bottom: 8 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
+                                <XAxis type="number" domain={[0, 100]} stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <YAxis type="category" dataKey="axis" stroke="#94a3b8" tick={{ fontSize: 12 }} />
+                                <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
+                                <ReferenceLine x={65} stroke="#94a3b8" strokeDasharray="4 4" />
+                                <Bar dataKey="value" fill="#22c55e" radius={[0, 6, 6, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                </div>
+
+                <div className="glass-card p-5 border border-slate-700/50">
+                    <h2 className="text-lg font-semibold text-slate-100 mb-4">System Status</h2>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3 text-center">
                             <span className="text-xs text-slate-400">Exhaust Spread</span>
-                            <div className={`text-xl font-bold ${(liveData.exhaust_spread || 0) > 75 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                {liveData.exhaust_spread?.toFixed(1) || 'N/A'}°F
+                            <div className={`text-xl font-bold ${asNumber(liveData.exhaust_spread) > 75 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                {asNumber(liveData.exhaust_spread).toFixed(1)}°F
                             </div>
                         </div>
-                        <div className="text-center">
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3 text-center">
                             <span className="text-xs text-slate-400">Suction Valve</span>
-                            <div className="text-xl font-bold text-cyan-400">{liveData.suction_valve_pct?.toFixed(1) || 'N/A'}%</div>
+                            <div className="text-xl font-bold text-cyan-400">{asNumber(liveData.suction_valve_pct).toFixed(1)}%</div>
                         </div>
-                        <div className="text-center">
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3 text-center">
                             <span className="text-xs text-slate-400">Speed Control</span>
-                            <div className="text-xl font-bold text-emerald-400">{liveData.speed_control_pct?.toFixed(1) || 'N/A'}%</div>
+                            <div className="text-xl font-bold text-emerald-400">{asNumber(liveData.speed_control_pct).toFixed(1)}%</div>
                         </div>
-                        <div className="text-center">
+                        <div className="rounded-lg border border-slate-700/60 bg-slate-900/60 p-3 text-center">
                             <span className="text-xs text-slate-400">Recycle Valve</span>
-                            <div className="text-xl font-bold text-amber-400">{liveData.recycle_valve_pct?.toFixed(1) || 'N/A'}%</div>
+                            <div className="text-xl font-bold text-amber-400">{asNumber(liveData.recycle_valve_pct).toFixed(1)}%</div>
                         </div>
                     </div>
                 </div>
