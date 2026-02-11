@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { fetchPVDiagram } from '../lib/api';
+import { useUnit } from '../contexts/UnitContext';
 
 interface PVDiagramProps {
     unitId: string;
@@ -26,6 +27,7 @@ interface ValveHealth {
 }
 
 export function PVDiagram({ unitId, stage = 1 }: PVDiagramProps) {
+    const { pollIntervalMs } = useUnit();
     const [data, setData] = useState<{ volume: number; pressure: number }[]>([]);
     const [loading, setLoading] = useState(true);
     const [source, setSource] = useState<string>('MODEL');
@@ -64,9 +66,9 @@ export function PVDiagram({ unitId, stage = 1 }: PVDiagramProps) {
         };
 
         loadData();
-        const interval = setInterval(loadData, 5000);
+        const interval = setInterval(loadData, pollIntervalMs);
         return () => clearInterval(interval);
-    }, [unitId, stage]);
+    }, [unitId, stage, pollIntervalMs]);
 
     if (loading) {
         return (
@@ -166,7 +168,7 @@ export function PVDiagram({ unitId, stage = 1 }: PVDiagramProps) {
             {/* Footer */}
             <div className="mt-3 text-xs text-slate-500 text-center">
                 {source === 'MODEL'
-                    ? '📐 Synthesized ideal polytropic curve (n=1.25) • Updates every 5s'
+                    ? `📐 Synthesized ideal polytropic curve (n=1.25) • Updates every ${(pollIntervalMs / 1000).toFixed(0)}s`
                     : '📡 Live data from high-speed pressure transducers'}
             </div>
         </div>

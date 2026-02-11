@@ -34,6 +34,9 @@ class UnitUpdate(BaseModel):
     modbus_host: Optional[str] = None
     modbus_port: Optional[int] = None
     is_active: Optional[bool] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    tag: Optional[str] = None
 
 
 class ManualOverride(BaseModel):
@@ -247,10 +250,15 @@ async def get_unit(
     
     if not unit:
         raise HTTPException(status_code=404, detail=f"Unit {unit_id} not found")
+
+    db_unit = await crud.get_unit(db, unit_id)
     
     return {
         "unit_id": unit.unit_id,
         "name": unit.name,
+        "description": getattr(db_unit, "description", None) if db_unit else None,
+        "tag": getattr(db_unit, "description", None) if db_unit else None,
+        "location": getattr(db_unit, "location", None) if db_unit else None,
         "stage_count": unit.stage_count,
         "modbus_host": unit.modbus_host,
         "modbus_port": unit.modbus_port,
@@ -258,6 +266,69 @@ async def get_unit(
         "is_active": unit.is_active,
         "equipment_spec": unit.equipment_spec,
         "gas_properties": unit.gas_properties
+    }
+
+
+@router.put("/{unit_id}")
+async def update_unit(
+    unit_id: str,
+    payload: UnitUpdate,
+    current_user: dict = Depends(require_engineer),
+    db: AsyncSession = Depends(get_db)
+) -> Dict:
+    """Update a compressor unit (name/tag/stage count/activation)."""
+    from app.services.unit_manager import get_unit_manager
+
+    manager = get_unit_manager()
+    await _sync_units_from_db(manager, db)
+
+    db_unit = await crud.get_unit(db, unit_id)
+    if not db_unit:
+        raise HTTPException(status_code=404, detail=f"Unit {unit_id} not found")
+
+    update_fields: Dict[str, object] = {}
+    if payload.name is not None:
+        update_fields["name"] = payload.name
+    if payload.description is not None:
+        update_fields["description"] = payload.description
+    if payload.location is not None:
+        update_fields["location"] = payload.location
+    if payload.tag is not None:
+        # Persist tag in unit.description for now to avoid schema migration.
+        update_fields["description"] = payload.tag
+    if payload.is_active is not None:
+        update_fields["is_active"] = payload.is_active
+
+    if update_fields:
+        await crud.update_unit(db, unit_id, **update_fields)
+
+    if payload.stage_count is not None:
+        await crud.upsert_equipment_spec(db, unit_id, stage_count=max(1, int(payload.stage_count)))
+
+    await manager.load_unit_config(unit_id)
+    refreshed = await crud.get_unit(db, unit_id)
+    stage_count = 3
+    if refreshed and getattr(refreshed, "equipment_spec", None) and getattr(refreshed.equipment_spec, "stage_count", None):
+        stage_count = int(refreshed.equipment_spec.stage_count)
+
+    current = manager.get_unit(unit_id)
+    manager.register_unit(UnitConfig(
+        unit_id=unit_id,
+        name=(refreshed.name if refreshed else (payload.name or unit_id)),
+        stage_count=stage_count,
+        modbus_host=current.modbus_host if current else None,
+        modbus_port=current.modbus_port if current else 502,
+        modbus_slave_id=current.modbus_slave_id if current else 1,
+        is_active=(refreshed.is_active if refreshed else True)
+    ))
+
+    return {
+        "status": "updated",
+        "unit_id": unit_id,
+        "name": refreshed.name if refreshed else payload.name,
+        "tag": (getattr(refreshed, "description", None) if refreshed else payload.tag),
+        "stage_count": stage_count,
+        "is_active": refreshed.is_active if refreshed else True
     }
 
 
@@ -309,9 +380,10 @@ async def get_resolved_data(
     if not live_data:
         live_data = {}
     
-    # Resolve through the two-state resolver
+    # Resolve through plan-aligned resolver with per-parameter source chain config.
     resolver = get_data_resolver()
     parameters = None
+    parameter_configs: Dict[str, Dict] = {}
     try:
         from app.api.routes.modbus_config import get_modbus_config as load_modbus_config
         modbus_config = await load_modbus_config(unit_id=unit_id, db=db)
@@ -329,6 +401,19 @@ async def get_resolved_data(
             mode = "MANUAL" if str(mode_raw).upper() == "MANUAL" else "LIVE"
             manual_raw = reg.get("manualValue", reg.get("manual_value"))
 
+            parameter_configs[name] = {
+                "valueMode": mode,
+                "manualValue": manual_raw,
+                "default": reg.get("default", reg.get("nominal")),
+                "min": reg.get("min"),
+                "max": reg.get("max"),
+                "sourcePriority": reg.get("sourcePriority", reg.get("source_priority")),
+                "calcFormula": reg.get("calcFormula", reg.get("calculationFormula")),
+                "interstage_dp": reg.get("interstage_dp"),
+                "cooler_approach_f": reg.get("cooler_approach_f"),
+                "speed_ratio": reg.get("speed_ratio"),
+            }
+
             if mode == "MANUAL" and manual_raw not in (None, ""):
                 try:
                     resolver.set_manual_value(unit_id, name, float(manual_raw))
@@ -343,12 +428,20 @@ async def get_resolved_data(
         # Keep endpoint resilient even if config lookup fails.
         parameters = None
 
-    resolved = resolver.resolve_all(unit_id, live_data, parameters)
+    resolved = resolver.resolve_all(
+        unit_id=unit_id,
+        live_data=live_data,
+        parameter_configs=parameter_configs,
+        parameters=parameters
+    )
     
     return {
         "unit_id": unit_id,
         "timestamp": resolved['timestamp'],
         "sources": resolved['sources'],
+        "quality": resolved.get("quality", {}),
+        "details": resolved.get("details", {}),
+        "quality_meta": resolved.get("quality_meta", {}),
         **resolved['values']
     }
 

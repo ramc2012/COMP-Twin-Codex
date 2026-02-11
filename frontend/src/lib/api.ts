@@ -12,7 +12,7 @@ const WS_ORIGIN = `${WS_SCHEME}://${window.location.host}`;
 export interface LiveDataResponse {
     unit_id: string;
     timestamp: string;
-    sources?: Record<string, 'LIVE' | 'MANUAL'>;
+    sources?: Record<string, 'LIVE' | 'CALCULATED' | 'MANUAL' | 'DEFAULT' | 'BAD'>;
     [key: string]: any;
 }
 
@@ -33,6 +33,17 @@ export interface UnitCreateRequest {
     modbus_slave_id?: number;
     description?: string;
     location?: string;
+}
+
+export interface UnitUpdateRequest {
+    name?: string;
+    stage_count?: number;
+    modbus_host?: string | null;
+    modbus_port?: number;
+    is_active?: boolean;
+    description?: string;
+    location?: string;
+    tag?: string;
 }
 
 export interface EquipmentConfig {
@@ -87,6 +98,11 @@ export interface TrendQuery {
     start: string;
     end: string;
     aggregation?: '1s' | '1m' | '5m' | '1h';
+}
+
+export interface PerformanceTrendPoint {
+    time: string;
+    value: number;
 }
 
 // User Management Types
@@ -212,6 +228,18 @@ export async function fetchUnits(): Promise<{ units: UnitSummary[]; count: numbe
 export async function fetchUnit(unitId: string): Promise<any> {
     const response = await fetch(`${API_BASE}/units/${unitId}`, { headers: authHeaders() });
     if (!response.ok) throw new Error('Failed to fetch unit');
+    return response.json();
+}
+
+export async function updateUnit(unitId: string, payload: UnitUpdateRequest): Promise<any> {
+    const response = await fetch(`${API_BASE}/units/${unitId}`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(payload)
+    });
+    if (!response.ok) {
+        throw new Error(await getApiErrorMessage(response, 'Failed to update package'));
+    }
     return response.json();
 }
 
@@ -499,10 +527,57 @@ export async function fetchPhysicsResults(unitId: string): Promise<any> {
     return response.json();
 }
 
+// ============ PERFORMANCE ============
+
+export async function fetchPerformanceSummary(unitId: string): Promise<any> {
+    const response = await fetch(`${API_BASE}/units/${unitId}/performance/summary`);
+    if (!response.ok) throw new Error('Failed to fetch performance summary');
+    return response.json();
+}
+
+export async function fetchPerformanceEfficiency(
+    unitId: string,
+    query: { start?: string; aggregate?: string } = {}
+): Promise<any> {
+    const params = new URLSearchParams();
+    if (query.start) params.set('start', query.start);
+    if (query.aggregate) params.set('aggregate', query.aggregate);
+    const url = `${API_BASE}/units/${unitId}/performance/efficiency${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch efficiency trends');
+    return response.json();
+}
+
+export async function fetchPerformancePower(
+    unitId: string,
+    query: { start?: string; aggregate?: string } = {}
+): Promise<any> {
+    const params = new URLSearchParams();
+    if (query.start) params.set('start', query.start);
+    if (query.aggregate) params.set('aggregate', query.aggregate);
+    const url = `${API_BASE}/units/${unitId}/performance/power${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch power analytics');
+    return response.json();
+}
+
+export async function fetchPerformanceDegradation(
+    unitId: string,
+    query: { start?: string; aggregate?: string } = {}
+): Promise<any> {
+    const params = new URLSearchParams();
+    if (query.start) params.set('start', query.start);
+    if (query.aggregate) params.set('aggregate', query.aggregate);
+    const url = `${API_BASE}/units/${unitId}/performance/degradation${params.toString() ? `?${params.toString()}` : ''}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Failed to fetch degradation analytics');
+    return response.json();
+}
+
 // ============ WEBSOCKET ============
 
 export function createWebSocket(unitId: string, onMessage: (data: any) => void, onError?: (error: any) => void) {
-    const ws = new WebSocket(`${WS_ORIGIN}/ws/${unitId}`);
+    const ws = new WebSocket(`${WS_ORIGIN}/api/units/ws/${unitId}`);
 
     ws.onopen = () => console.log('WebSocket connected');
     ws.onmessage = (event) => {

@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ComposedChart } from 'recharts';
 import { fetchPTDiagram } from '../lib/api';
+import { useUnit } from '../contexts/UnitContext';
 
 interface PTDiagramProps {
   unitId: string;
@@ -17,6 +18,7 @@ interface Point {
 }
 
 export function PTDiagram({ unitId }: PTDiagramProps) {
+  const { pollIntervalMs } = useUnit();
   const [path, setPath] = useState<Point[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,9 +35,9 @@ export function PTDiagram({ unitId }: PTDiagramProps) {
     };
 
     loadData();
-    const interval = setInterval(loadData, 5000);
+    const interval = setInterval(loadData, pollIntervalMs);
     return () => clearInterval(interval);
-  }, [unitId]);
+  }, [unitId, pollIntervalMs]);
 
   if (loading) {
     return (

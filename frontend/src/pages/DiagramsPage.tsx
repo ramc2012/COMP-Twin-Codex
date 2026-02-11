@@ -4,10 +4,12 @@
 import { useState } from 'react';
 import { PVDiagram } from '../components/PVDiagram';
 import { PTDiagram } from '../components/PTDiagram';
+import { useUnit } from '../contexts/UnitContext';
 
 export function DiagramsPage() {
+  const { unitId, stageCount } = useUnit();
   const [selectedStage, setSelectedStage] = useState(1);
-  const unitId = 'GCS-001';
+  const stages = Array.from({ length: Math.max(1, stageCount || 1) }, (_, i) => i + 1);
 
   return (
     <div className="min-h-screen p-6">
@@ -24,9 +26,9 @@ export function DiagramsPage() {
       {/* PV Diagrams for each stage */}
       <section>
         <div className="flex items-center gap-4 mb-4">
-          <h2 className="text-lg font-semibold text-slate-300">PV Diagrams by Stage</h2>
+            <h2 className="text-lg font-semibold text-slate-300">PV Diagrams by Stage</h2>
           <div className="flex gap-2">
-            {[1, 2, 3].map((stage) => (
+            {stages.map((stage) => (
               <button
                 key={stage}
                 onClick={() => setSelectedStage(stage)}

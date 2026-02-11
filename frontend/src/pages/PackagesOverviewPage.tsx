@@ -71,7 +71,7 @@ function healthTone(score: number): { ring: string; text: string; chip: string; 
 
 export function PackagesOverviewPage() {
     const navigate = useNavigate();
-    const { units, setUnitId, refreshUnits, loading } = useUnit();
+    const { units, setUnitId, refreshUnits, loading, pollIntervalMs } = useUnit();
     const [telemetry, setTelemetry] = useState<Record<string, PackageTelemetry>>({});
     const [history, setHistory] = useState<Record<string, TrendPoint[]>>({});
     const [showAddPackage, setShowAddPackage] = useState(false);
@@ -108,9 +108,12 @@ export function PackagesOverviewPage() {
                 units.map(async (u) => {
                     try {
                         const [summary, live] = await Promise.all([
-                            fetchUnitSummary(u.unit_id),
-                            fetchLiveData(u.unit_id)
+                            fetchUnitSummary(u.unit_id).catch(() => null),
+                            fetchLiveData(u.unit_id).catch(() => null)
                         ]);
+                        if (!summary && !live) {
+                            return [u.unit_id, null, null] as const;
+                        }
                         return [u.unit_id, {
                             engine_state_label: live?.engine_state_label,
                             engine_rpm: summary?.engine_rpm ?? live?.engine_rpm,
@@ -123,23 +126,31 @@ export function PackagesOverviewPage() {
                             total_bhp: live?.total_bhp,
                             active_alarms: summary?.active_alarms ?? 0,
                             shutdown_active: summary?.shutdown_active ?? false,
-                            timestamp: live?.timestamp
+                            timestamp: live?.timestamp ?? summary?.timestamp
                         }, {
                             t: now,
                             rpm: Number(summary?.engine_rpm ?? live?.engine_rpm ?? 0),
                             bhp: Number(live?.total_bhp ?? 0)
                         }] as const;
                     } catch {
-                        return [u.unit_id, {}, { t: now, rpm: 0, bhp: 0 }] as const;
+                        return [u.unit_id, null, null] as const;
                     }
                 })
             );
 
             if (!mounted) return;
-            setTelemetry(Object.fromEntries(entries.map(([id, t]) => [id, t])));
+            setTelemetry((prev) => {
+                const next = { ...prev };
+                for (const [id, t] of entries) {
+                    if (!t) continue;
+                    next[id] = { ...(next[id] || {}), ...t };
+                }
+                return next;
+            });
             setHistory((prev) => {
                 const next = { ...prev };
                 for (const [id, , point] of entries) {
+                    if (!point) continue;
                     const series = next[id] ? [...next[id], point] : [point];
                     next[id] = series.slice(-28);
                 }
@@ -148,12 +159,12 @@ export function PackagesOverviewPage() {
         };
 
         if (units.length > 0) load();
-        const timer = setInterval(load, 3000);
+        const timer = setInterval(load, pollIntervalMs);
         return () => {
             mounted = false;
             clearInterval(timer);
         };
-    }, [units]);
+    }, [units, pollIntervalMs]);
 
     const fleetSummary = useMemo(() => {
         const items = units.map((u) => telemetry[u.unit_id] || {});

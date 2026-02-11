@@ -5,19 +5,42 @@ import { useEffect } from 'react';
 import { useDataStore } from '../store/useDataStore';
 import { fetchLiveData } from '../lib/api';
 import { MetricCard } from '../components/MetricCard';
+import { useUnit } from '../contexts/UnitContext';
 
 export function EnginePage() {
-  const { liveData, setLiveData } = useDataStore();
+  const { unitId, pollIntervalMs } = useUnit();
+  const { liveData, setLiveData, error, setError } = useDataStore();
 
   useEffect(() => {
+    let mounted = true;
     const fetchData = async () => {
-      const data = await fetchLiveData('GCS-001');
-      setLiveData(data as any);
+      try {
+        const data = await fetchLiveData(unitId);
+        if (!mounted) return;
+        setLiveData(data as any);
+        setError(null);
+      } catch (e: any) {
+        if (!mounted) return;
+        if (!useDataStore.getState().liveData) {
+          setError(`Failed to fetch engine data: ${e?.message || e}`);
+        }
+      }
     };
     fetchData();
-    const interval = setInterval(fetchData, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    const interval = setInterval(fetchData, pollIntervalMs);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [unitId, pollIntervalMs, setLiveData, setError]);
+
+  if (!liveData && error) {
+    return (
+      <div className="min-h-screen p-6 flex items-center justify-center">
+        <span className="text-rose-300">{error}</span>
+      </div>
+    );
+  }
 
   if (!liveData) {
     return (

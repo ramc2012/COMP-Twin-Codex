@@ -15,7 +15,7 @@ interface LayoutProps {
 export function Layout({ children }: LayoutProps) {
     const user = useAuthStore((state) => state.user);
     const logout = useAuthStore((state) => state.logout);
-    const { activeUnit, unitId, units } = useUnit();
+    const { activeUnit, unitId, units, pollIntervalMs, setPollIntervalMs } = useUnit();
     const location = useLocation();
     const navigate = useNavigate();
     const packageBase = `/packages/${activeUnit?.unit_id || unitId || 'GCS-001'}`;
@@ -37,6 +37,7 @@ export function Layout({ children }: LayoutProps) {
         { path: `${packageBase}/dashboard`, label: 'Dashboard', icon: '📊' },
         { path: `${packageBase}/compressor`, label: 'Compressor', icon: '🔄' },
         { path: `${packageBase}/engine`, label: 'Engine', icon: '🔧' },
+        { path: `${packageBase}/performance`, label: 'Performance', icon: '🧠' },
         { path: `${packageBase}/trending`, label: 'Trending', icon: '📉' },
         { path: `${packageBase}/diagrams`, label: 'Diagrams', icon: '📈' },
         { path: `${packageBase}/alarms`, label: 'Alarms', icon: '🔔' },
@@ -185,6 +186,21 @@ export function Layout({ children }: LayoutProps) {
                         )}
                         <div className="mb-2">
                             <UnitSelector />
+                        </div>
+                        <div className="mb-2">
+                            <label className="block text-[11px] text-slate-400 mb-1">App Polling</label>
+                            <select
+                                value={String(pollIntervalMs)}
+                                onChange={(e) => setPollIntervalMs(Number(e.target.value))}
+                                className="w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
+                            >
+                                <option value="1000">1 second</option>
+                                <option value="2000">2 seconds (Default)</option>
+                                <option value="5000">5 seconds</option>
+                                <option value="10000">10 seconds</option>
+                                <option value="15000">15 seconds</option>
+                                <option value="30000">30 seconds</option>
+                            </select>
                         </div>
                         <div className="text-slate-400 text-xs text-center">
                             Individual settings are scoped per package

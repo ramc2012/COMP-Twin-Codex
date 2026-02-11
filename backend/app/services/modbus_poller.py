@@ -361,8 +361,21 @@ class ModbusPoller:
         for reg in self.register_config:
             addr, name, scale = reg.get('address'), reg.get('name'), reg.get('scale', 1.0)
             if addr in raw_data:
-                val = raw_data[addr] * scale
-                normalized = round(val, 2) if scale < 1 else val
+                raw_val = raw_data[addr]
+                bit_index = reg.get("bit")
+
+                # Discrete points can be packed into a word; decode bit when provided by map.
+                if bit_index is not None:
+                    try:
+                        bit_i = int(bit_index)
+                        normalized = 1 if ((int(raw_val) >> bit_i) & 0x1) else 0
+                    except Exception:
+                        val = raw_val * scale
+                        normalized = round(val, 2) if scale < 1 else val
+                else:
+                    val = raw_val * scale
+                    normalized = round(val, 2) if scale < 1 else val
+
                 scaled[name] = normalized
 
                 canonical_name = self._canonical_metric_name(name)

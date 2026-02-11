@@ -21,10 +21,19 @@ connected_clients: List[WebSocket] = []
 LIVE_STALE_SECONDS = 5.0
 
 
-def _load_parameter_preferences() -> Dict[str, Dict[str, Any]]:
-    """Load per-parameter value mode preferences from shared register config."""
-    config_path = "/app/shared_config/registers.yaml"
-    if not os.path.exists(config_path):
+def _load_parameter_preferences(unit_id: str) -> Dict[str, Dict[str, Any]]:
+    """Load per-parameter source preferences for a package."""
+    registers: List[Dict[str, Any]] = []
+
+    per_unit_paths = [
+        f"/app/shared_config/modbus_by_unit/{unit_id}.yaml",
+        f"shared_config/modbus_by_unit/{unit_id}.yaml",
+    ]
+    config_path = next((p for p in per_unit_paths if os.path.exists(p)), None)
+    if config_path is None and os.path.exists("/app/shared_config/registers.yaml"):
+        config_path = "/app/shared_config/registers.yaml"
+
+    if config_path is None:
         return {}
 
     try:
@@ -32,7 +41,7 @@ def _load_parameter_preferences() -> Dict[str, Dict[str, Any]]:
             loaded = yaml.safe_load(f) or {}
         registers = loaded.get("registers", []) or []
     except Exception as e:
-        logger.warning(f"Unable to load register preferences: {e}")
+        logger.warning(f"Unable to load register preferences for %s: %s", unit_id, e)
         return {}
 
     preferences: Dict[str, Dict[str, Any]] = {}
@@ -43,20 +52,17 @@ def _load_parameter_preferences() -> Dict[str, Dict[str, Any]]:
         if not isinstance(name, str) or not name.strip():
             continue
 
-        mode_raw = reg.get("value_mode", reg.get("valueMode", "LIVE"))
-        mode = "MANUAL" if str(mode_raw).upper() == "MANUAL" else "LIVE"
-
-        manual_raw = reg.get("manual_value", reg.get("manualValue"))
-        manual_value = None
-        if manual_raw is not None and manual_raw != "":
-            try:
-                manual_value = float(manual_raw)
-            except (TypeError, ValueError):
-                manual_value = None
-
         preferences[name.strip()] = {
-            "mode": mode,
-            "manual_value": manual_value,
+            "valueMode": "MANUAL" if str(reg.get("value_mode", reg.get("valueMode", "LIVE"))).upper() == "MANUAL" else "LIVE",
+            "manualValue": reg.get("manual_value", reg.get("manualValue")),
+            "default": reg.get("default", reg.get("nominal")),
+            "min": reg.get("min"),
+            "max": reg.get("max"),
+            "sourcePriority": reg.get("sourcePriority", reg.get("source_priority")),
+            "calcFormula": reg.get("calcFormula", reg.get("calculationFormula")),
+            "interstage_dp": reg.get("interstage_dp"),
+            "cooler_approach_f": reg.get("cooler_approach_f"),
+            "speed_ratio": reg.get("speed_ratio"),
         }
     return preferences
 
@@ -78,6 +84,7 @@ async def get_live_data(unit_id: str) -> Dict:
         raise HTTPException(status_code=404, detail=f"Unit {unit_id} not found")
 
     data = manager.get_live_data(unit_id) or {}
+    data_source_mode = "LIVE"
 
     # GCS-001 is polled from Modbus; keep manager cache in sync for all package-aware routes.
     if settings.MODBUS_ENABLED and unit_id == "GCS-001":
@@ -86,42 +93,60 @@ async def get_live_data(unit_id: str) -> Dict:
             data = poller_data
             manager.update_live_data(unit_id, poller_data)
 
+    # Fail-safe: never hard-fail dashboard reads when Modbus is unavailable.
+    # This keeps UI stable and avoids error flicker.
     if not data or len(data) < 5:
-        raise HTTPException(status_code=503, detail=f"No live data available for {unit_id}")
+        from app.services.data_simulator import DataSimulator
+        simulator = DataSimulator()
+        data = simulator.generate_snapshot()
+        manager.update_live_data(unit_id, data)
+        data_source_mode = "SIMULATED"
 
     age_seconds = manager.get_live_data_age_seconds(unit_id)
-    if age_seconds is None or age_seconds > LIVE_STALE_SECONDS:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Live data stale for {unit_id} (age={age_seconds if age_seconds is not None else 'unknown'}s)"
-        )
+    is_stale = age_seconds is None or age_seconds > LIVE_STALE_SECONDS
+    if is_stale and (not data or len(data) < 5):
+        from app.services.data_simulator import DataSimulator
+        simulator = DataSimulator()
+        data = simulator.generate_snapshot()
+        manager.update_live_data(unit_id, data)
+        data_source_mode = "SIMULATED"
+        age_seconds = 0.0
+        is_stale = False
 
-    preferences = _load_parameter_preferences()
+    preferences = _load_parameter_preferences(unit_id)
     sources: Dict[str, str] = {}
+    quality: Dict[str, str] = {}
     poller = get_modbus_poller() if settings.MODBUS_ENABLED else None
     canonical = getattr(poller, "_canonical_metric_name", None)
 
-    for name, pref in preferences.items():
-        mode = pref.get("mode", "LIVE")
-        manual_value = pref.get("manual_value")
+    if preferences:
+        from app.services.data_resolver import get_data_resolver
 
-        aliases = [name]
-        try:
-            if callable(canonical):
-                mapped = canonical(name)
-                if isinstance(mapped, str) and mapped and mapped not in aliases:
-                    aliases.append(mapped)
-        except Exception:
-            pass
+        resolver = get_data_resolver()
+        resolved = resolver.resolve_all(
+            unit_id=unit_id,
+            live_data=data,
+            parameter_configs=preferences,
+            parameters=list(preferences.keys()),
+        )
 
-        if mode == "MANUAL" and manual_value is not None:
+        for name, value in (resolved.get("values") or {}).items():
+            aliases = [name]
+            try:
+                if callable(canonical):
+                    mapped = canonical(name)
+                    if isinstance(mapped, str) and mapped and mapped not in aliases:
+                        aliases.append(mapped)
+            except Exception:
+                pass
+
             for alias in aliases:
-                data[alias] = manual_value
-                sources[alias] = "MANUAL"
-            continue
-
-        for alias in aliases:
-            sources.setdefault(alias, "LIVE")
+                if value is not None:
+                    data[alias] = value
+                src = (resolved.get("sources") or {}).get(name, "LIVE")
+                q = (resolved.get("quality") or {}).get(name, "GOOD")
+                sources[alias] = src
+                quality[alias] = q
 
     # Basic defaults with alias support to prevent crash if data missing
     def get_val(*keys: str, default=0.0):
@@ -172,6 +197,9 @@ async def get_live_data(unit_id: str) -> Dict:
     return {
         "unit_id": unit_id,
         "timestamp": datetime.now().isoformat(),
+        "data_source_mode": data_source_mode,
+        "is_stale": bool(is_stale),
+        "live_age_seconds": age_seconds,
         
         # Engine state
         "engine_state": state_code,
@@ -248,6 +276,7 @@ async def get_live_data(unit_id: str) -> Dict:
 
         # Parameter value source map
         "sources": sources,
+        "quality": quality,
     }
 
 

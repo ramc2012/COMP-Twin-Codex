@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.api.routes import (
     dashboard, diagrams, auth, trends, config, alarms, 
-    units_api, modbus_config, alarm_setpoints, site_conditions, alarm_history
+    units_api, modbus_config, alarm_setpoints, site_conditions, alarm_history, performance
 )
 from app.services.modbus_poller import init_modbus_poller_with_callback
 from app.services.redis_cache import init_redis_cache, get_redis_cache
@@ -196,6 +196,7 @@ app.include_router(modbus_config.router)
 app.include_router(alarm_setpoints.router)
 app.include_router(site_conditions.router)
 app.include_router(alarm_history.router)
+app.include_router(performance.router)
 
 
 @app.get("/health")

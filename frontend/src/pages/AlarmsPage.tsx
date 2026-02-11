@@ -25,7 +25,7 @@ const TIME_RANGES = [
 ];
 
 export function AlarmsPage() {
-    const { unitId } = useUnit();
+    const { unitId, pollIntervalMs } = useUnit();
     const [activeAlarms, setActiveAlarms] = useState<AlarmActive[]>([]);
     const [summary, setSummary] = useState<any>(null);
     const [loading, setLoading] = useState(true);
@@ -85,9 +85,9 @@ export function AlarmsPage() {
 
     useEffect(() => {
         loadAlarms();
-        const interval = setInterval(loadAlarms, 5000);
+        const interval = setInterval(loadAlarms, pollIntervalMs);
         return () => clearInterval(interval);
-    }, [unitId]);
+    }, [unitId, pollIntervalMs]);
 
     useEffect(() => {
         if (tab === 'history') {

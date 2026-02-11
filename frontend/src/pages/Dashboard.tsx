@@ -17,7 +17,6 @@ import { useDataStore } from '../store/useDataStore';
 import { useUnit } from '../contexts/UnitContext';
 import { createWebSocket, fetchLiveData } from '../lib/api';
 import { MetricCard } from '../components/MetricCard';
-import { StageCard } from '../components/StageCard';
 
 const ENGINE_STATES: Record<number, { label: string; color: string }> = {
     0: { label: 'STOPPED', color: 'bg-slate-500' },
@@ -89,9 +88,10 @@ function healthTone(score: number): { ring: string; text: string; label: string;
 
 export function Dashboard() {
     const navigate = useNavigate();
-    const { unitId, setUnitId, units } = useUnit();
-    const { liveData, isLoading, error, setLiveData, clearLiveData, setError } = useDataStore();
+    const { unitId, setUnitId, units, pollIntervalMs } = useUnit();
+    const { liveData, isLoading, error, setLiveData, setError } = useDataStore();
     const [wsConnected, setWsConnected] = useState(false);
+    const [softError, setSoftError] = useState<string | null>(null);
     const [hoveredGraph, setHoveredGraph] = useState<'pressure' | 'thermal' | 'control' | null>(null);
     const legendLabel = (value: string) => <span style={{ color: '#cbd5e1' }}>{value}</span>;
 
@@ -105,11 +105,10 @@ export function Dashboard() {
         const applyLiveData = (payload: any): boolean => {
             if (!isMounted || !payload) return false;
             if (typeof payload.engine_state !== 'number') {
-                clearLiveData();
-                setError(`No live data available for ${unitId}`);
                 return false;
             }
             setLiveData(payload as any);
+            setSoftError(null);
             setError(null);
             return true;
         };
@@ -123,6 +122,9 @@ export function Dashboard() {
                         const ok = applyLiveData(msg.data);
                         wsActive = ok;
                         setWsConnected(ok);
+                        if (!ok && useDataStore.getState().liveData) {
+                            setSoftError(`Waiting for valid stream data for ${unitId}`);
+                        }
                     }
                 },
                 () => {
@@ -134,13 +136,18 @@ export function Dashboard() {
             ws.onopen = () => {
                 wsActive = true;
                 setWsConnected(true);
+                setSoftError(null);
+                setError(null);
             };
             ws.onclose = () => {
                 wsActive = false;
                 setWsConnected(false);
-                clearLiveData();
-                setError('Live stream disconnected. Waiting for reconnect...');
-                if (isMounted) reconnectTimer = setTimeout(connectWebSocket, 2000);
+                if (useDataStore.getState().liveData) {
+                    setSoftError('Live stream disconnected. Falling back to polling...');
+                } else {
+                    setError('Live stream disconnected. Reconnecting...');
+                }
+                if (isMounted) reconnectTimer = setTimeout(connectWebSocket, Math.max(3000, pollIntervalMs * 2));
             };
         };
 
@@ -150,13 +157,17 @@ export function Dashboard() {
                 const data = await fetchLiveData(unitId);
                 applyLiveData(data);
             } catch (e: any) {
-                clearLiveData();
-                setError(`Failed to fetch live data: ${e?.message || e}`);
+                const message = `Failed to fetch live data: ${e?.message || e}`;
+                if (useDataStore.getState().liveData) {
+                    setSoftError(message);
+                } else {
+                    setError(message);
+                }
             }
         };
 
         fetchData();
-        pollTimer = setInterval(fetchData, 2000);
+        pollTimer = setInterval(fetchData, pollIntervalMs);
         connectWebSocket();
 
         return () => {
@@ -166,7 +177,7 @@ export function Dashboard() {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             if (ws && ws.readyState <= 1) ws.close();
         };
-    }, [unitId, setLiveData, clearLiveData, setError]);
+    }, [unitId, pollIntervalMs, setLiveData, setError]);
 
     if (isLoading && !liveData) {
         return (
@@ -179,7 +190,7 @@ export function Dashboard() {
         );
     }
 
-    if (error) {
+    if (error && !liveData) {
         return (
             <div className="flex items-center justify-center h-screen">
                 <div className="glass-card p-8 text-center max-w-md">
@@ -240,6 +251,11 @@ export function Dashboard() {
 
     return (
         <div className="min-h-screen p-6 pb-8">
+            {softError && (
+                <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-200">
+                    {softError}
+                </div>
+            )}
             <header className="mb-7 rounded-2xl border border-slate-700/60 bg-gradient-to-r from-slate-900 via-slate-900 to-cyan-950/50 p-5 md:p-6 relative overflow-hidden">
                 <div className="absolute -right-20 -top-16 h-56 w-56 rounded-full bg-cyan-500/15 blur-3xl" />
                 <div className="absolute -left-10 -bottom-12 h-44 w-44 rounded-full bg-violet-500/10 blur-3xl" />
@@ -422,11 +438,47 @@ export function Dashboard() {
 
             <section className="mb-6">
                 <h2 className="text-lg font-semibold text-slate-300 mb-4">Compression Stage Detail</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4">
+                <div className="flex gap-3 overflow-x-auto pb-1 pr-1">
                     {stages.map((stage: any) => (
-                        <StageCard key={stage.stage} data={stage} />
+                        <div
+                            key={stage.stage}
+                            className="min-w-[260px] max-w-[300px] rounded-xl border border-slate-700/60 bg-slate-900/50 p-3"
+                        >
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="text-sm font-semibold text-slate-100">Stage {stage.stage}</div>
+                                <div className="text-xs text-cyan-300">R {asNumber(stage.ratio).toFixed(2)}</div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded bg-slate-800/60 p-2">
+                                    <div className="text-slate-500">Suc P</div>
+                                    <div className="text-slate-100 font-semibold">{asNumber(stage.suction_press).toFixed(1)} PSIG</div>
+                                </div>
+                                <div className="rounded bg-slate-800/60 p-2">
+                                    <div className="text-slate-500">Dis P</div>
+                                    <div className="text-slate-100 font-semibold">{asNumber(stage.discharge_press).toFixed(1)} PSIG</div>
+                                </div>
+                                <div className="rounded bg-slate-800/60 p-2">
+                                    <div className="text-slate-500">Suc T</div>
+                                    <div className="text-slate-100 font-semibold">{asNumber(stage.suction_temp).toFixed(1)} °F</div>
+                                </div>
+                                <div className="rounded bg-slate-800/60 p-2">
+                                    <div className="text-slate-500">Dis T</div>
+                                    <div className="text-slate-100 font-semibold">{asNumber(stage.discharge_temp).toFixed(1)} °F</div>
+                                </div>
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                                <div className="rounded bg-slate-800/50 p-2">
+                                    <div className="text-slate-500">Isen Eff</div>
+                                    <div className="text-emerald-300 font-semibold">{asNumber(stage.isentropic_eff).toFixed(1)}%</div>
+                                </div>
+                                <div className="rounded bg-slate-800/50 p-2">
+                                    <div className="text-slate-500">Vol Eff</div>
+                                    <div className="text-cyan-300 font-semibold">{asNumber(stage.volumetric_eff).toFixed(1)}%</div>
+                                </div>
+                            </div>
+                        </div>
                     ))}
-                    {!stages.length && <div className="text-slate-400">No stage data available</div>}
+                    {!stages.length && <div className="text-slate-400 px-2 py-4">No stage data available</div>}
                 </div>
             </section>
 
