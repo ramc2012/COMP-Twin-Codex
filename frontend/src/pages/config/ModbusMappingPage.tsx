@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { ConfigHeader } from '../../components/ConfigHeader';
 import { useUnit } from '../../contexts/UnitContext';
-import { fetchModbusConfig, updateModbusConfig } from '../../lib/api';
+import { fetchModbusConfig, getDataValueMode, setDataValueMode, type DataValueMode, updateModbusConfig } from '../../lib/api';
 
 interface RegisterMapping {
     address: number;
@@ -38,6 +38,7 @@ export function ModbusMappingPage() {
     const [config, setConfig] = useState<{ server: ModbusServerConfig; registers: RegisterMapping[] } | null>(null);
     const [registers, setRegisters] = useState<RegisterMapping[]>([]);
     const [serverSettings, setServerSettings] = useState<ModbusServerConfig | null>(null);
+    const [dataValueMode, setDataValueModeState] = useState<DataValueMode>('LIVE');
     const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
     const [filter, setFilter] = useState('');
 
@@ -51,6 +52,7 @@ export function ModbusMappingPage() {
             setConfig(data);
             setRegisters(data.registers || []);
             setServerSettings(data.server || null);
+            setDataValueModeState(getDataValueMode(unitId));
         } catch (e) {
             console.error('Failed to load Modbus config:', e);
         }
@@ -64,9 +66,10 @@ export function ModbusMappingPage() {
                 server: serverSettings,
                 registers
             });
+            setDataValueMode(unitId, dataValueMode);
+            await loadConfig();
             setSaveStatus('success');
             setIsEditing(false);
-            // Reload to get updated "active" host/port if needed, though we update state
             setTimeout(() => setSaveStatus('idle'), 3000);
         } catch (e) {
             setSaveStatus('error');
@@ -118,7 +121,44 @@ export function ModbusMappingPage() {
             <div className="glass-card p-6 mb-6">
                 <h2 className="text-xl font-semibold text-white mb-4">Connection Settings</h2>
 
-                <div className="flex items-center gap-4 mb-6">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+                    <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-4">
+                        <div className="text-sm font-semibold text-slate-200 mb-2">Dashboard Value Source</div>
+                        <div className="text-xs text-slate-400 mb-3 leading-5">
+                            <span className="inline-flex items-center rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 mr-1">LIVE</span>
+                            shows strict live values only (no hold-last-good fallback).{' '}
+                            <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 mr-1">MANUAL</span>
+                            shows resolved/manual override values.
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <button
+                                type="button"
+                                disabled={!isEditing}
+                                onClick={() => setDataValueModeState('LIVE')}
+                                className={`px-3 py-1.5 rounded-md border text-xs ${
+                                    dataValueMode === 'LIVE'
+                                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
+                                        : 'bg-slate-800 border-slate-700 text-slate-300'
+                                } disabled:opacity-50`}
+                            >
+                                LIVE
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!isEditing}
+                                onClick={() => setDataValueModeState('MANUAL')}
+                                className={`px-3 py-1.5 rounded-md border text-xs ${
+                                    dataValueMode === 'MANUAL'
+                                        ? 'bg-amber-500/20 border-amber-400/40 text-amber-300'
+                                        : 'bg-slate-800 border-slate-700 text-slate-300'
+                                } disabled:opacity-50`}
+                            >
+                                MANUAL
+                            </button>
+                            <span className="text-xs text-slate-500 ml-2">Current: {dataValueMode}</span>
+                        </div>
+                    </div>
+
                     <div className="flex items-center gap-2">
                         <label className="text-slate-300">Run Mode:</label>
                         <div className={`

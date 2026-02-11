@@ -21,7 +21,15 @@ export function ConfigHeader({
     isSaving = false
 }: ConfigHeaderProps) {
     const navigate = useNavigate();
-    const { unitId } = useUnit();
+    const { unitId, activeUnit, units } = useUnit();
+    const packageIndex = Math.max(0, units.findIndex((u) => u.unit_id === unitId));
+    const packageTone = [
+        'border-cyan-500/35 bg-cyan-500/10 text-cyan-200',
+        'border-emerald-500/35 bg-emerald-500/10 text-emerald-200',
+        'border-amber-500/35 bg-amber-500/10 text-amber-200',
+        'border-violet-500/35 bg-violet-500/10 text-violet-200',
+        'border-rose-500/35 bg-rose-500/10 text-rose-200'
+    ][packageIndex % 5];
 
     return (
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-4 border-b border-white/10">
@@ -43,6 +51,17 @@ export function ConfigHeader({
                         )}
                     </div>
                     <p className="text-slate-400">{description}</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className={`px-2.5 py-1 rounded-md border text-[11px] font-semibold tracking-wide ${packageTone}`}>
+                            Package Scope: {unitId}
+                        </span>
+                        <span className="px-2.5 py-1 rounded-md border border-slate-700/80 bg-slate-900/60 text-[11px] text-slate-300">
+                            {activeUnit?.stage_count ?? 0} stages
+                        </span>
+                        <span className="px-2.5 py-1 rounded-md border border-slate-700/80 bg-slate-900/60 text-[11px] text-slate-400">
+                            Settings are isolated per package
+                        </span>
+                    </div>
                 </div>
             </div>
 

@@ -6,6 +6,7 @@ from typing import Dict, Optional, List, Any
 from dataclasses import dataclass
 import logging
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class MultiUnitManager:
         self._physics_engines: Dict[str, Any] = {}
         self._alarm_engines: Dict[str, Any] = {}
         self._live_data: Dict[str, Dict] = {}
+        self._live_updated_at: Dict[str, datetime] = {}
     
     def register_unit(self, config: UnitConfig) -> bool:
         """Register a new unit."""
@@ -48,6 +50,7 @@ class MultiUnitManager:
         self.units[config.unit_id] = config
         if config.unit_id not in self._live_data:
             self._live_data[config.unit_id] = {}
+            self._live_updated_at[config.unit_id] = datetime.min
         logger.info(f"Registered unit: {config.unit_id} ({config.name})")
         return True
     
@@ -64,6 +67,8 @@ class MultiUnitManager:
         del self.units[unit_id]
         if unit_id in self._live_data:
             del self._live_data[unit_id]
+        if unit_id in self._live_updated_at:
+            del self._live_updated_at[unit_id]
         
         logger.info(f"Unregistered unit: {unit_id}")
         return True
@@ -89,11 +94,19 @@ class MultiUnitManager:
         """Update live data for a unit."""
         if unit_id not in self._live_data:
             self._live_data[unit_id] = {}
-        self._live_data[unit_id].update(data)
+        # Replace snapshot to avoid carrying stale/previous-cycle values as "live".
+        self._live_data[unit_id] = dict(data or {})
+        self._live_updated_at[unit_id] = datetime.utcnow()
     
     def get_live_data(self, unit_id: str) -> Dict:
         """Get current live data for a unit."""
         return self._live_data.get(unit_id, {})
+
+    def get_live_data_age_seconds(self, unit_id: str) -> Optional[float]:
+        updated_at = self._live_updated_at.get(unit_id)
+        if not updated_at or updated_at == datetime.min:
+            return None
+        return max(0.0, (datetime.utcnow() - updated_at).total_seconds())
     
     def get_stage_count(self, unit_id: str) -> int:
         """Get number of stages for a unit."""

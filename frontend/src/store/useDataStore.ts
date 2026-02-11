@@ -68,7 +68,8 @@ interface DataStore {
   isLoading: boolean;
   error: string | null;
   
-  setLiveData: (data: LiveData) => void;
+  setLiveData: (data: LiveData | null) => void;
+  clearLiveData: () => void;
   setConnected: (connected: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -81,6 +82,7 @@ export const useDataStore = create<DataStore>((set) => ({
   error: null,
   
   setLiveData: (data) => set({ liveData: data, isLoading: false }),
+  clearLiveData: () => set({ liveData: null, isLoading: false }),
   setConnected: (connected) => set({ isConnected: connected }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error, isLoading: false }),

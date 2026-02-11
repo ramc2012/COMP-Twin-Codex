@@ -14,7 +14,7 @@ import {
 } from 'recharts';
 import { useDataStore } from '../store/useDataStore';
 import { useUnit } from '../contexts/UnitContext';
-import { fetchLiveData, createWebSocket } from '../lib/api';
+import { createWebSocket, fetchLiveData, fetchResolvedData, getDataValueMode, type DataValueMode } from '../lib/api';
 import { MetricCard } from '../components/MetricCard';
 import { StageCard } from '../components/StageCard';
 
@@ -89,34 +89,43 @@ function healthTone(score: number): { ring: string; text: string; label: string;
 export function Dashboard() {
     const navigate = useNavigate();
     const { unitId, setUnitId, units } = useUnit();
-    const { liveData, isLoading, error, setLiveData, setError } = useDataStore();
+    const { liveData, isLoading, error, setLiveData, clearLiveData, setError } = useDataStore();
     const [wsConnected, setWsConnected] = useState(false);
+    const [dataMode, setDataMode] = useState<DataValueMode>('LIVE');
+
+    useEffect(() => {
+        setDataMode(getDataValueMode(unitId));
+    }, [unitId]);
 
     useEffect(() => {
         let isMounted = true;
         let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
         let pollTimer: ReturnType<typeof setInterval> | null = null;
         let ws: WebSocket | null = null;
-        let hasReceivedData = false;
         let wsActive = false;
 
-        const applyLiveData = (payload: any) => {
-            if (!isMounted || !payload) return;
-            if (typeof payload.engine_state !== 'number') return;
+        const applyLiveData = (payload: any): boolean => {
+            if (!isMounted || !payload) return false;
+            if (typeof payload.engine_state !== 'number') {
+                clearLiveData();
+                setError(`No ${dataMode.toLowerCase()} data available for ${unitId}`);
+                return false;
+            }
             setLiveData(payload as any);
             setError(null);
-            hasReceivedData = true;
+            return true;
         };
 
         const connectWebSocket = () => {
+            if (dataMode !== 'LIVE') return;
             if (!isMounted) return;
             ws = createWebSocket(
                 unitId,
                 (msg) => {
                     if (msg.type === 'LIVE_DATA' || msg.type === 'RESOLVED_DATA') {
-                        applyLiveData(msg.data);
-                        wsActive = true;
-                        setWsConnected(true);
+                        const ok = applyLiveData(msg.data);
+                        wsActive = ok;
+                        setWsConnected(ok);
                     }
                 },
                 () => {
@@ -132,17 +141,22 @@ export function Dashboard() {
             ws.onclose = () => {
                 wsActive = false;
                 setWsConnected(false);
+                clearLiveData();
+                setError('Live stream disconnected. Waiting for reconnect...');
                 if (isMounted) reconnectTimer = setTimeout(connectWebSocket, 2000);
             };
         };
 
         const fetchData = async () => {
-            if (wsActive) return;
+            if (dataMode === 'LIVE' && wsActive) return;
             try {
-                const data = await fetchLiveData(unitId);
+                const data = dataMode === 'MANUAL'
+                    ? await fetchResolvedData(unitId)
+                    : await fetchLiveData(unitId);
                 applyLiveData(data);
             } catch (e: any) {
-                if (!hasReceivedData) setError(`Failed to fetch data: ${e?.message || e}`);
+                clearLiveData();
+                setError(`Failed to fetch ${dataMode.toLowerCase()} data: ${e?.message || e}`);
             }
         };
 
@@ -157,7 +171,7 @@ export function Dashboard() {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             if (ws && ws.readyState <= 1) ws.close();
         };
-    }, [unitId, setLiveData, setError]);
+    }, [unitId, dataMode, setLiveData, clearLiveData, setError]);
 
     if (isLoading && !liveData) {
         return (
@@ -187,7 +201,7 @@ export function Dashboard() {
 
     const engineState = ENGINE_STATES[liveData.engine_state] || { label: 'UNKNOWN', color: 'bg-slate-500' };
     const sources = (liveData as any).sources || {};
-    const getQuality = (param: string): any => sources[param] || 'LIVE';
+    const getQuality = (param: string): any => (dataMode === 'LIVE' ? 'LIVE' : (sources[param] || 'LIVE'));
 
     const health = computeHealthScore(liveData);
     const tone = healthTone(health);
@@ -224,13 +238,17 @@ export function Dashboard() {
             <header className="mb-7 rounded-2xl border border-slate-700/60 bg-gradient-to-r from-slate-900 via-slate-900 to-cyan-950/50 p-5 md:p-6 relative overflow-hidden">
                 <div className="absolute -right-20 -top-16 h-56 w-56 rounded-full bg-cyan-500/15 blur-3xl" />
                 <div className="absolute -left-10 -bottom-12 h-44 w-44 rounded-full bg-violet-500/10 blur-3xl" />
-                <div className="relative flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
-                    <div>
-                        <h1 className="text-3xl font-bold text-white">Compressor Health Cockpit</h1>
-                        <p className="text-slate-300 mt-1">Unit {unitId} operational clarity with pressure, thermal, and control health context.</p>
-                        <div className="flex gap-2 mt-3 flex-wrap">
-                            {units.map((unit, index) => (
-                                <button
+                    <div className="relative flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+                        <div>
+                            <h1 className="text-3xl font-bold text-white">Compressor Health Cockpit</h1>
+                            <p className="text-slate-300 mt-1">Unit {unitId} operational clarity with pressure, thermal, and control health context.</p>
+                            <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-600/60 bg-slate-800/40">
+                                <span className="text-[11px] uppercase tracking-wide text-slate-400">Value Mode</span>
+                                <span className={`text-xs font-semibold ${dataMode === 'LIVE' ? 'text-emerald-300' : 'text-amber-300'}`}>{dataMode}</span>
+                            </div>
+                            <div className="flex gap-2 mt-3 flex-wrap">
+                                {units.map((unit, index) => (
+                                    <button
                                     key={unit.unit_id}
                                     type="button"
                                     onClick={() => {
@@ -249,16 +267,22 @@ export function Dashboard() {
                         </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-4 md:gap-6">
+                        <div className="flex flex-wrap items-center gap-4 md:gap-6">
                         <div className="flex items-center gap-3 text-xs text-slate-400 bg-slate-800/50 px-3 py-1.5 rounded-full border border-slate-700">
                             <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-emerald-500" />Live</span>
                             <span className="flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-amber-500" />Manual</span>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
-                            <span className="text-sm text-slate-300">{wsConnected ? 'WebSocket' : 'Polling'}</span>
-                        </div>
+                            <div className="flex items-center gap-2">
+                                <div className={`w-2 h-2 rounded-full ${
+                                    dataMode === 'MANUAL'
+                                        ? 'bg-amber-400'
+                                        : (wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400')
+                                }`} />
+                                <span className="text-sm text-slate-300">
+                                    {dataMode === 'MANUAL' ? 'Resolved Polling' : (wsConnected ? 'WebSocket' : 'Polling')}
+                                </span>
+                            </div>
 
                         <div className={`px-3 py-1.5 rounded-full ${engineState.color} text-white text-sm font-semibold`}>{engineState.label}</div>
 

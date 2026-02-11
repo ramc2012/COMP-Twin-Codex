@@ -2,7 +2,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from typing import List, Dict
 import asyncio
-import json
 import logging
 from datetime import datetime
 
@@ -17,6 +16,7 @@ router = APIRouter(prefix="/api/units", tags=["dashboard"])
 
 # Store connected WebSocket clients
 connected_clients: List[WebSocket] = []
+LIVE_STALE_SECONDS = 5.0
 
 
 @router.get("/{unit_id}/live")
@@ -27,7 +27,6 @@ async def get_live_data(unit_id: str) -> Dict:
     """
     settings = get_settings()
     from app.services.unit_manager import get_unit_manager
-    from app.services.data_simulator import DataSimulator
 
     manager = get_unit_manager()
     if not manager.get_unit(unit_id):
@@ -46,9 +45,14 @@ async def get_live_data(unit_id: str) -> Dict:
             manager.update_live_data(unit_id, poller_data)
 
     if not data or len(data) < 5:
-        simulator = DataSimulator()
-        data = simulator.generate_snapshot()
-        manager.update_live_data(unit_id, data)
+        raise HTTPException(status_code=503, detail=f"No live data available for {unit_id}")
+
+    age_seconds = manager.get_live_data_age_seconds(unit_id)
+    if age_seconds is None or age_seconds > LIVE_STALE_SECONDS:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Live data stale for {unit_id} (age={age_seconds if age_seconds is not None else 'unknown'}s)"
+        )
 
     # Basic defaults with alias support to prevent crash if data missing
     def get_val(*keys: str, default=0.0):
@@ -206,15 +210,20 @@ async def websocket_endpoint(websocket: WebSocket, unit_id: str):
     
     try:
         while True:
-            # Get live data
-            data = await get_live_data(unit_id)
-            
-            # Send to client
-            await websocket.send_json({
-                "type": "LIVE_DATA",
-                "unit_id": unit_id,
-                "data": data
-            })
+            try:
+                data = await get_live_data(unit_id)
+                await websocket.send_json({
+                    "type": "LIVE_DATA",
+                    "unit_id": unit_id,
+                    "data": data
+                })
+            except HTTPException as e:
+                await websocket.send_json({
+                    "type": "LIVE_DATA",
+                    "unit_id": unit_id,
+                    "data": None,
+                    "error": e.detail
+                })
             
             # Wait 1 second
             await asyncio.sleep(1)
