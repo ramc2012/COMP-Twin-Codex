@@ -5,7 +5,8 @@
 import { useState, useEffect } from 'react';
 import { ConfigHeader } from '../../components/ConfigHeader';
 import { useUnit } from '../../contexts/UnitContext';
-import { fetchModbusConfig, getDataValueMode, setDataValueMode, type DataValueMode, updateModbusConfig } from '../../lib/api';
+import { fetchModbusConfig, updateModbusConfig } from '../../lib/api';
+import { initialRegisters } from '../../data/initialRegisters';
 
 interface RegisterMapping {
     address: number;
@@ -17,6 +18,14 @@ interface RegisterMapping {
     dataType: string;
     category: string;
     pollGroup: string;
+    type?: 'Analog' | 'Discrete';
+    min?: number | null;
+    max?: number | null;
+    nominal?: number;
+    default?: number;
+    liveValue?: number | string | null;
+    valueMode?: 'LIVE' | 'MANUAL';
+    manualValue?: number | null;
 }
 
 interface ModbusServerConfig {
@@ -32,15 +41,32 @@ interface ModbusServerConfig {
     sim_port: number;
 }
 
+interface CalibrationDialogState {
+    unit: string;
+    min: string;
+    max: string;
+    scale: string;
+    offset: string;
+}
+
 export function ModbusMappingPage() {
     const { unitId } = useUnit();
     const [isEditing, setIsEditing] = useState(false);
     const [config, setConfig] = useState<{ server: ModbusServerConfig; registers: RegisterMapping[] } | null>(null);
     const [registers, setRegisters] = useState<RegisterMapping[]>([]);
     const [serverSettings, setServerSettings] = useState<ModbusServerConfig | null>(null);
-    const [dataValueMode, setDataValueModeState] = useState<DataValueMode>('LIVE');
     const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
     const [filter, setFilter] = useState('');
+    const [typeFilter, setTypeFilter] = useState<'ALL' | 'Analog' | 'Discrete'>('ALL');
+    const [lastLoadedAt, setLastLoadedAt] = useState<string>('');
+    const [calibrationIndex, setCalibrationIndex] = useState<number | null>(null);
+    const [calibrationDraft, setCalibrationDraft] = useState<CalibrationDialogState>({
+        unit: 'none',
+        min: '',
+        max: '',
+        scale: '1',
+        offset: '0'
+    });
 
     useEffect(() => {
         loadConfig();
@@ -48,11 +74,57 @@ export function ModbusMappingPage() {
 
     const loadConfig = async () => {
         try {
-            const data = await fetchModbusConfig(unitId);
+            const [data, liveSnapshot] = await Promise.all([
+                fetchModbusConfig(unitId),
+                fetch('/api/units/' + unitId + '/live').then(async (r) => {
+                    if (!r.ok) return null;
+                    return r.json();
+                }).catch(() => null)
+            ]);
             setConfig(data);
-            setRegisters(data.registers || []);
+            const byAddress = new Map(initialRegisters.map((r) => [Number(r.address), r]));
+            const byConfigAddress = new Map((data.registers || []).map((r: any) => [Number(r.address), r]));
+
+            const mergedFromInitial = initialRegisters.map((base) => {
+                const reg: any = byConfigAddress.get(Number(base.address)) || {};
+                return {
+                    address: Number(reg.address ?? base.address),
+                    name: String(reg.name ?? base.name),
+                    description: String(reg.description ?? base.description ?? ''),
+                    unit: String(reg.unit ?? base.unit ?? ''),
+                    scale: Number(reg.scale ?? 1),
+                    offset: Number(reg.offset ?? 0),
+                    dataType: String(reg.dataType ?? reg.data_type ?? 'uint16'),
+                    category: String(reg.category ?? base.category ?? 'general'),
+                    pollGroup: String(reg.pollGroup ?? reg.poll_group ?? 'A'),
+                    type: (reg.type || base.type || 'Analog') as 'Analog' | 'Discrete',
+                    min: Number(reg.min ?? base.min ?? 0),
+                    max: Number(reg.max ?? base.max ?? 1000),
+                    nominal: Number(reg.nominal ?? reg.default ?? base.defaultValue ?? 0),
+                    default: Number(reg.default ?? reg.nominal ?? base.defaultValue ?? 0),
+                    liveValue: liveSnapshot?.[reg.name ?? base.name] ?? null,
+                    valueMode: String(reg.valueMode || reg.value_mode || 'LIVE').toUpperCase() === 'MANUAL' ? 'MANUAL' : 'LIVE',
+                    manualValue: reg.manualValue ?? reg.manual_value ?? null
+                } as RegisterMapping;
+            });
+
+            const extras = (data.registers || [])
+                .filter((r: any) => !byAddress.has(Number(r.address)))
+                .map((reg: any) => ({
+                    ...reg,
+                    type: (reg.type || 'Analog') as 'Analog' | 'Discrete',
+                    min: Number(reg.min ?? 0),
+                    max: Number(reg.max ?? 1000),
+                    nominal: Number(reg.nominal ?? reg.default ?? 0),
+                    default: Number(reg.default ?? reg.nominal ?? 0),
+                    liveValue: liveSnapshot?.[reg.name] ?? null,
+                    valueMode: String(reg.valueMode || reg.value_mode || 'LIVE').toUpperCase() === 'MANUAL' ? 'MANUAL' : 'LIVE',
+                    manualValue: reg.manualValue ?? reg.manual_value ?? null
+                }));
+
+            setRegisters([...mergedFromInitial, ...extras]);
             setServerSettings(data.server || null);
-            setDataValueModeState(getDataValueMode(unitId));
+            setLastLoadedAt(new Date().toISOString());
         } catch (e) {
             console.error('Failed to load Modbus config:', e);
         }
@@ -66,7 +138,6 @@ export function ModbusMappingPage() {
                 server: serverSettings,
                 registers
             });
-            setDataValueMode(unitId, dataValueMode);
             await loadConfig();
             setSaveStatus('success');
             setIsEditing(false);
@@ -89,10 +160,92 @@ export function ModbusMappingPage() {
     };
 
     const filteredRegisters = registers.filter(r =>
-        r.name.toLowerCase().includes(filter.toLowerCase()) ||
-        r.description.toLowerCase().includes(filter.toLowerCase()) ||
-        r.address.toString().includes(filter)
+        (typeFilter === 'ALL' || (r.type || 'Analog') === typeFilter) &&
+        (
+            r.name.toLowerCase().includes(filter.toLowerCase()) ||
+            r.description.toLowerCase().includes(filter.toLowerCase()) ||
+            r.address.toString().includes(filter)
+        )
     );
+
+    const unitOptions = ['PSIG', 'BAR', '°F', '°C', 'RPM', '%', 'State', 'A', 'V', 'BHP', 'ratio', 'none'];
+    const activeCalibrationRegister = calibrationIndex !== null ? registers[calibrationIndex] : null;
+
+    const formatNumber = (value: any, digits = 2) => {
+        if (value === null || value === undefined || value === '') return 'N/A';
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return 'N/A';
+        return parsed.toFixed(digits);
+    };
+
+    const openCalibrationDialog = (index: number) => {
+        const reg = registers[index];
+        if (!reg) return;
+        setCalibrationIndex(index);
+        setCalibrationDraft({
+            unit: reg.unit || 'none',
+            min: reg.min === null || reg.min === undefined ? '' : String(reg.min),
+            max: reg.max === null || reg.max === undefined ? '' : String(reg.max),
+            scale: reg.scale === null || reg.scale === undefined ? '1' : String(reg.scale),
+            offset: reg.offset === null || reg.offset === undefined ? '0' : String(reg.offset)
+        });
+    };
+
+    const applyCalibrationDialog = () => {
+        if (calibrationIndex === null) return;
+        setRegisters((prev) => {
+            const next = [...prev];
+            const current = next[calibrationIndex];
+            if (!current) return prev;
+            const regType = current.type || 'Analog';
+            next[calibrationIndex] = {
+                ...current,
+                unit: calibrationDraft.unit === 'none' ? '' : calibrationDraft.unit,
+                scale: Number.isFinite(Number(calibrationDraft.scale)) ? Number(calibrationDraft.scale) : 1,
+                offset: Number.isFinite(Number(calibrationDraft.offset)) ? Number(calibrationDraft.offset) : 0,
+                ...(regType === 'Analog'
+                    ? {
+                        min: calibrationDraft.min.trim() === '' ? null : Number(calibrationDraft.min),
+                        max: calibrationDraft.max.trim() === '' ? null : Number(calibrationDraft.max)
+                    }
+                    : {})
+            };
+            return next;
+        });
+        setCalibrationIndex(null);
+    };
+
+    const exportSnapshots = async () => {
+        try {
+            const [live, resolved] = await Promise.all([
+                fetch(`/api/units/${unitId}/live`).then(async (r) => (r.ok ? r.json() : { error: await r.text() })).catch((e) => ({ error: String(e) })),
+                fetch(`/api/units/${unitId}/resolved`).then(async (r) => (r.ok ? r.json() : { error: await r.text() })).catch((e) => ({ error: String(e) }))
+            ]);
+
+            const payload = {
+                exported_at: new Date().toISOString(),
+                unit_id: unitId,
+                modbus_config_snapshot: {
+                    server: serverSettings,
+                    registers
+                },
+                live_snapshot: live,
+                calculated_resolved_snapshot: resolved
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${unitId}_modbus_validation_snapshot_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            console.error('Export failed:', e);
+            setSaveStatus('error');
+        }
+    };
 
     if (!config || !serverSettings) return <div className="p-6 text-white">Loading...</div>;
 
@@ -105,6 +258,28 @@ export function ModbusMappingPage() {
                 onEditToggle={() => setIsEditing(!isEditing)}
                 onSave={handleSave}
             />
+
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-slate-400">
+                    Last refresh: {lastLoadedAt ? new Date(lastLoadedAt).toLocaleTimeString() : 'N/A'}
+                </div>
+                <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={loadConfig}
+                        className="px-3 py-1.5 rounded border border-slate-700 text-slate-200 text-xs hover:bg-slate-800/60"
+                    >
+                        Refresh Live Values
+                    </button>
+                    <button
+                        type="button"
+                        onClick={exportSnapshots}
+                        className="px-3 py-1.5 rounded border border-cyan-500/40 text-cyan-300 text-xs hover:bg-cyan-500/10"
+                    >
+                        Export Validation Snapshot
+                    </button>
+                </div>
+            </div>
 
             {saveStatus === 'success' && (
                 <div className="mb-4 p-3 bg-green-500/20 border border-green-500/50 rounded-lg text-green-400 text-sm">
@@ -123,39 +298,12 @@ export function ModbusMappingPage() {
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
                     <div className="rounded-lg border border-slate-700/60 bg-slate-900/40 p-4">
-                        <div className="text-sm font-semibold text-slate-200 mb-2">Dashboard Value Source</div>
+                        <div className="text-sm font-semibold text-slate-200 mb-2">Per-Parameter Value Source</div>
                         <div className="text-xs text-slate-400 mb-3 leading-5">
                             <span className="inline-flex items-center rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-300 mr-1">LIVE</span>
-                            shows strict live values only (no hold-last-good fallback).{' '}
+                            uses strict live PLC value only.{' '}
                             <span className="inline-flex items-center rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300 mr-1">MANUAL</span>
-                            shows resolved/manual override values.
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <button
-                                type="button"
-                                disabled={!isEditing}
-                                onClick={() => setDataValueModeState('LIVE')}
-                                className={`px-3 py-1.5 rounded-md border text-xs ${
-                                    dataValueMode === 'LIVE'
-                                        ? 'bg-emerald-500/20 border-emerald-400/40 text-emerald-300'
-                                        : 'bg-slate-800 border-slate-700 text-slate-300'
-                                } disabled:opacity-50`}
-                            >
-                                LIVE
-                            </button>
-                            <button
-                                type="button"
-                                disabled={!isEditing}
-                                onClick={() => setDataValueModeState('MANUAL')}
-                                className={`px-3 py-1.5 rounded-md border text-xs ${
-                                    dataValueMode === 'MANUAL'
-                                        ? 'bg-amber-500/20 border-amber-400/40 text-amber-300'
-                                        : 'bg-slate-800 border-slate-700 text-slate-300'
-                                } disabled:opacity-50`}
-                            >
-                                MANUAL
-                            </button>
-                            <span className="text-xs text-slate-500 ml-2">Current: {dataValueMode}</span>
+                            uses user-specified manual value. Configure source and value in each register row below.
                         </div>
                     </div>
 
@@ -256,13 +404,24 @@ export function ModbusMappingPage() {
             <div className="glass-card p-6">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-xl font-semibold text-white">Registers ({registers.length})</h2>
-                    <input
-                        type="text"
-                        placeholder="Search registers..."
-                        value={filter}
-                        onChange={(e) => setFilter(e.target.value)}
-                        className="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm text-white focus:outline-none focus:border-cyan-500"
-                    />
+                    <div className="flex items-center gap-2">
+                        <select
+                            value={typeFilter}
+                            onChange={(e) => setTypeFilter(e.target.value as any)}
+                            className="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm text-white focus:outline-none focus:border-cyan-500"
+                        >
+                            <option value="ALL">All Input Types</option>
+                            <option value="Analog">Analog</option>
+                            <option value="Discrete">Discrete</option>
+                        </select>
+                        <input
+                            type="text"
+                            placeholder="Search registers..."
+                            value={filter}
+                            onChange={(e) => setFilter(e.target.value)}
+                            className="px-3 py-1 bg-slate-800 border border-slate-700 rounded text-sm text-white focus:outline-none focus:border-cyan-500"
+                        />
+                    </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -272,16 +431,18 @@ export function ModbusMappingPage() {
                                 <th className="p-2">Addr</th>
                                 <th className="p-2">Name</th>
                                 <th className="p-2">Description</th>
-                                <th className="p-2">Unit</th>
-                                <th className="p-2">Scale</th>
-                                <th className="p-2">Offset</th>
+                                <th className="p-2">Input</th>
+                                <th className="p-2">Live Value</th>
+                                <th className="p-2">Calibration</th>
                                 <th className="p-2">Type</th>
                                 <th className="p-2">Group</th>
+                                <th className="p-2">Source</th>
+                                <th className="p-2">Manual Value</th>
                             </tr>
                         </thead>
                         <tbody className="text-slate-300">
                             {filteredRegisters.length === 0 ? (
-                                <tr><td colSpan={8} className="p-4 text-center text-slate-500">No registers found</td></tr>
+                                <tr><td colSpan={10} className="p-4 text-center text-slate-500">No registers found</td></tr>
                             ) : filteredRegisters.map((reg) => {
                                 // Find actual index in main array for editing
                                 const index = registers.indexOf(reg);
@@ -305,38 +466,36 @@ export function ModbusMappingPage() {
                                             />
                                         </td>
                                         <td className="p-2">
-                                            <input
-                                                value={reg.description || ''}
-                                                disabled={!isEditing}
-                                                onChange={(e) => updateRegister(index, 'description', e.target.value)}
-                                                className="w-full bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1"
-                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => openCalibrationDialog(index)}
+                                                className="w-full text-left rounded px-2 py-1 hover:bg-cyan-500/10 border border-transparent hover:border-cyan-500/30 transition"
+                                                title="Open calibration dialog"
+                                            >
+                                                <div className="text-slate-100">{reg.description || '-'}</div>
+                                                <div className="text-[11px] text-cyan-400">Click to edit unit/range/offset/scale</div>
+                                            </button>
+                                        </td>
+                                        <td className="p-2 text-xs text-slate-400">{reg.type || 'Analog'}</td>
+                                        <td className="p-2">
+                                            <span className="text-xs text-cyan-300">{reg.liveValue ?? 'N/A'}</span>
                                         </td>
                                         <td className="p-2">
-                                            <input
-                                                value={reg.unit || ''}
-                                                disabled={!isEditing}
-                                                onChange={(e) => updateRegister(index, 'unit', e.target.value)}
-                                                className="w-16 bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1"
-                                            />
-                                        </td>
-                                        <td className="p-2">
-                                            <input
-                                                type="number"
-                                                value={reg.scale}
-                                                disabled={!isEditing}
-                                                onChange={(e) => updateRegister(index, 'scale', parseFloat(e.target.value))}
-                                                className="w-16 bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1"
-                                            />
-                                        </td>
-                                        <td className="p-2">
-                                            <input
-                                                type="number"
-                                                value={reg.offset}
-                                                disabled={!isEditing}
-                                                onChange={(e) => updateRegister(index, 'offset', parseFloat(e.target.value))}
-                                                className="w-16 bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1"
-                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => openCalibrationDialog(index)}
+                                                className="w-full rounded border border-slate-700/60 bg-slate-900/50 px-2 py-1 text-left hover:border-cyan-500/40 hover:bg-cyan-500/5 transition"
+                                            >
+                                                <div className="text-xs text-slate-200">Unit: {reg.unit || 'none'}</div>
+                                                <div className="text-[11px] text-slate-400">
+                                                    {(reg.type || 'Analog') === 'Analog'
+                                                        ? `Min ${formatNumber(reg.min, 1)} / Max ${formatNumber(reg.max, 1)}`
+                                                        : 'Discrete input'}
+                                                </div>
+                                                <div className="text-[11px] text-slate-500">
+                                                    Scale {formatNumber(reg.scale, 3)} | Offset {formatNumber(reg.offset, 3)}
+                                                </div>
+                                            </button>
                                         </td>
                                         <td className="p-2">
                                             <select
@@ -359,6 +518,31 @@ export function ModbusMappingPage() {
                                                 className="w-10 bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1 text-center"
                                             />
                                         </td>
+                                        <td className="p-2">
+                                            <select
+                                                value={reg.valueMode || 'LIVE'}
+                                                disabled={!isEditing}
+                                                onChange={(e) => updateRegister(index, 'valueMode', e.target.value === 'MANUAL' ? 'MANUAL' : 'LIVE')}
+                                                className="bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1 text-xs"
+                                            >
+                                                <option value="LIVE">LIVE</option>
+                                                <option value="MANUAL">MANUAL</option>
+                                            </select>
+                                        </td>
+                                        <td className="p-2">
+                                            <input
+                                                type="number"
+                                                step="any"
+                                                value={reg.manualValue ?? ''}
+                                                disabled={!isEditing || reg.valueMode !== 'MANUAL'}
+                                                onChange={(e) => updateRegister(
+                                                    index,
+                                                    'manualValue',
+                                                    e.target.value === '' ? null : parseFloat(e.target.value)
+                                                )}
+                                                className="w-24 bg-transparent border-none focus:ring-1 focus:ring-cyan-500 rounded px-1 disabled:opacity-50"
+                                            />
+                                        </td>
                                     </tr>
                                 )
                             })}
@@ -366,6 +550,114 @@ export function ModbusMappingPage() {
                     </table>
                 </div>
             </div>
+
+            {activeCalibrationRegister && (
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className="w-full max-w-2xl rounded-xl border border-slate-700 bg-slate-900 p-5">
+                        <div className="flex items-start justify-between gap-4 mb-4">
+                            <div>
+                                <h3 className="text-lg font-semibold text-white">Parameter Calibration</h3>
+                                <p className="text-sm text-slate-300">
+                                    {activeCalibrationRegister.name} (Addr {activeCalibrationRegister.address})
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setCalibrationIndex(null)}
+                                className="px-2.5 py-1 rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="mb-4 rounded-lg border border-slate-700/70 bg-slate-950/60 p-3">
+                            <div className="text-xs text-slate-400">Description</div>
+                            <div className="text-sm text-slate-100">{activeCalibrationRegister.description || '-'}</div>
+                            <div className="mt-2 text-xs text-slate-500">
+                                Input type: <span className="text-slate-300">{activeCalibrationRegister.type || 'Analog'}</span>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Unit</label>
+                                <select
+                                    value={calibrationDraft.unit}
+                                    disabled={!isEditing}
+                                    onChange={(e) => setCalibrationDraft((prev) => ({ ...prev, unit: e.target.value }))}
+                                    className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-60"
+                                >
+                                    {unitOptions.map((u) => (
+                                        <option key={u} value={u}>{u}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Scale</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={calibrationDraft.scale}
+                                    disabled={!isEditing}
+                                    onChange={(e) => setCalibrationDraft((prev) => ({ ...prev, scale: e.target.value }))}
+                                    className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-60"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Offset</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={calibrationDraft.offset}
+                                    disabled={!isEditing}
+                                    onChange={(e) => setCalibrationDraft((prev) => ({ ...prev, offset: e.target.value }))}
+                                    className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-60"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Min (Analog only)</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={calibrationDraft.min}
+                                    disabled={!isEditing || (activeCalibrationRegister.type || 'Analog') !== 'Analog'}
+                                    onChange={(e) => setCalibrationDraft((prev) => ({ ...prev, min: e.target.value }))}
+                                    className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-60"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs text-slate-400 mb-1">Max (Analog only)</label>
+                                <input
+                                    type="number"
+                                    step="any"
+                                    value={calibrationDraft.max}
+                                    disabled={!isEditing || (activeCalibrationRegister.type || 'Analog') !== 'Analog'}
+                                    onChange={(e) => setCalibrationDraft((prev) => ({ ...prev, max: e.target.value }))}
+                                    className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white disabled:opacity-60"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="mt-5 flex items-center justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setCalibrationIndex(null)}
+                                className="px-4 py-2 rounded border border-slate-700 text-slate-300 hover:bg-slate-800"
+                            >
+                                Close
+                            </button>
+                            <button
+                                type="button"
+                                onClick={applyCalibrationDialog}
+                                disabled={!isEditing}
+                                className="px-4 py-2 rounded bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-50"
+                            >
+                                {isEditing ? 'Apply Calibration' : 'Enable Edit to Apply'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

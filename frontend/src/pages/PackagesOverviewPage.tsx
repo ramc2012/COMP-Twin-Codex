@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Area, AreaChart, ResponsiveContainer, Tooltip } from 'recharts';
-import { createUnit, fetchLiveData, fetchUnitSummary } from '../lib/api';
+import { createUnit, deleteUnit, fetchLiveData, fetchUnitSummary } from '../lib/api';
 import { useUnit } from '../contexts/UnitContext';
 
 type PackageTelemetry = {
@@ -75,6 +75,10 @@ export function PackagesOverviewPage() {
     const [telemetry, setTelemetry] = useState<Record<string, PackageTelemetry>>({});
     const [history, setHistory] = useState<Record<string, TrendPoint[]>>({});
     const [showAddPackage, setShowAddPackage] = useState(false);
+    const [showDeleteId, setShowDeleteId] = useState<string | null>(null);
+    const [hoveredPulseFor, setHoveredPulseFor] = useState<string | null>(null);
+    const [deleteBusy, setDeleteBusy] = useState(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
     const [addBusy, setAddBusy] = useState(false);
     const [addError, setAddError] = useState<string | null>(null);
     const [form, setForm] = useState({
@@ -189,6 +193,26 @@ export function PackagesOverviewPage() {
             setAddError(e?.message || 'Failed to create package');
         } finally {
             setAddBusy(false);
+        }
+    };
+
+    const submitDeletePackage = async () => {
+        if (!showDeleteId) return;
+        if (units.length <= 1) {
+            setDeleteError('At least one package must remain active.');
+            return;
+        }
+        setDeleteBusy(true);
+        setDeleteError(null);
+        try {
+            await deleteUnit(showDeleteId);
+            await refreshUnits();
+            setShowDeleteId(null);
+            navigate('/');
+        } catch (e: any) {
+            setDeleteError(e?.message || 'Failed to delete package');
+        } finally {
+            setDeleteBusy(false);
         }
     };
 
@@ -321,8 +345,23 @@ export function PackagesOverviewPage() {
                                             </div>
                                         </div>
 
-                                        <div className="mt-4 h-16 rounded-lg border border-slate-700/50 bg-slate-900/50 p-2">
-                                            <div className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Operation Pulse (RPM/BHP)</div>
+                                        <div
+                                            className="mt-4 h-24 rounded-lg border border-slate-700/50 bg-slate-900/50 p-2 relative"
+                                            onMouseEnter={() => setHoveredPulseFor(unit.unit_id)}
+                                            onMouseLeave={() => setHoveredPulseFor(null)}
+                                        >
+                                            <div className="mb-1 flex items-center justify-between gap-2">
+                                                <div className="text-[10px] uppercase tracking-wide text-slate-500">Operation Pulse</div>
+                                                <div className="flex items-center gap-2 text-[10px] text-slate-300">
+                                                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-cyan-400" />RPM</span>
+                                                    <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-violet-400" />BHP</span>
+                                                </div>
+                                            </div>
+                                            {hoveredPulseFor === unit.unit_id && (
+                                                <div className="absolute right-2 top-6 z-10 max-w-[220px] rounded border border-cyan-500/35 bg-slate-950/90 px-2 py-1 text-[10px] text-cyan-100">
+                                                    RPM and BHP trend together to expose load shift, drag, or transient instability.
+                                                </div>
+                                            )}
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <AreaChart data={trend}>
                                                     <defs>
@@ -352,6 +391,19 @@ export function PackagesOverviewPage() {
                                                     {fresh ? 'Fresh' : `Stale ${Math.round(staleSeconds)}s`}
                                                 </span>
                                             )}
+                                        </div>
+                                        <div className="mt-3 flex justify-end">
+                                            <button
+                                                type="button"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    setDeleteError(null);
+                                                    setShowDeleteId(unit.unit_id);
+                                                }}
+                                                className="px-2.5 py-1 rounded border border-rose-500/40 text-rose-300 hover:bg-rose-500/10 text-xs"
+                                            >
+                                                Delete Package
+                                            </button>
                                         </div>
                                     </div>
                                 </button>
@@ -414,6 +466,37 @@ export function PackagesOverviewPage() {
                                 disabled={addBusy}
                             >
                                 {addBusy ? 'Creating...' : 'Create Package'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showDeleteId && (
+                <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                    <div className="w-full max-w-md rounded-xl border border-slate-700 bg-slate-900 p-5">
+                        <h2 className="text-lg font-semibold text-white mb-2">Delete Package</h2>
+                        <p className="text-sm text-slate-300">
+                            This will deactivate and remove package <span className="font-semibold text-white">{showDeleteId}</span> from active workspace.
+                        </p>
+                        <p className="text-xs text-rose-300 mt-2">This action cannot be undone from UI.</p>
+                        {deleteError && <div className="text-sm text-rose-300 mt-3">{deleteError}</div>}
+                        <div className="flex gap-2 mt-5">
+                            <button
+                                type="button"
+                                onClick={() => setShowDeleteId(null)}
+                                className="flex-1 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200"
+                                disabled={deleteBusy}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={submitDeletePackage}
+                                className="flex-1 py-2 rounded bg-rose-600 hover:bg-rose-700 text-white"
+                                disabled={deleteBusy}
+                            >
+                                {deleteBusy ? 'Deleting...' : 'Delete'}
                             </button>
                         </div>
                     </div>

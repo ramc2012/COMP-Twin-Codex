@@ -1,9 +1,11 @@
 """Dashboard API routes - Live data endpoints"""
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
-from typing import List, Dict
+from typing import List, Dict, Any
 import asyncio
 import logging
 from datetime import datetime
+import os
+import yaml
 
 from ...services.modbus_poller import get_modbus_poller
 from ...services.physics_engine import PhysicsEngine, StageInput
@@ -17,6 +19,46 @@ router = APIRouter(prefix="/api/units", tags=["dashboard"])
 # Store connected WebSocket clients
 connected_clients: List[WebSocket] = []
 LIVE_STALE_SECONDS = 5.0
+
+
+def _load_parameter_preferences() -> Dict[str, Dict[str, Any]]:
+    """Load per-parameter value mode preferences from shared register config."""
+    config_path = "/app/shared_config/registers.yaml"
+    if not os.path.exists(config_path):
+        return {}
+
+    try:
+        with open(config_path, "r") as f:
+            loaded = yaml.safe_load(f) or {}
+        registers = loaded.get("registers", []) or []
+    except Exception as e:
+        logger.warning(f"Unable to load register preferences: {e}")
+        return {}
+
+    preferences: Dict[str, Dict[str, Any]] = {}
+    for reg in registers:
+        if not isinstance(reg, dict):
+            continue
+        name = reg.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+
+        mode_raw = reg.get("value_mode", reg.get("valueMode", "LIVE"))
+        mode = "MANUAL" if str(mode_raw).upper() == "MANUAL" else "LIVE"
+
+        manual_raw = reg.get("manual_value", reg.get("manualValue"))
+        manual_value = None
+        if manual_raw is not None and manual_raw != "":
+            try:
+                manual_value = float(manual_raw)
+            except (TypeError, ValueError):
+                manual_value = None
+
+        preferences[name.strip()] = {
+            "mode": mode,
+            "manual_value": manual_value,
+        }
+    return preferences
 
 
 @router.get("/{unit_id}/live")
@@ -53,6 +95,33 @@ async def get_live_data(unit_id: str) -> Dict:
             status_code=503,
             detail=f"Live data stale for {unit_id} (age={age_seconds if age_seconds is not None else 'unknown'}s)"
         )
+
+    preferences = _load_parameter_preferences()
+    sources: Dict[str, str] = {}
+    poller = get_modbus_poller() if settings.MODBUS_ENABLED else None
+    canonical = getattr(poller, "_canonical_metric_name", None)
+
+    for name, pref in preferences.items():
+        mode = pref.get("mode", "LIVE")
+        manual_value = pref.get("manual_value")
+
+        aliases = [name]
+        try:
+            if callable(canonical):
+                mapped = canonical(name)
+                if isinstance(mapped, str) and mapped and mapped not in aliases:
+                    aliases.append(mapped)
+        except Exception:
+            pass
+
+        if mode == "MANUAL" and manual_value is not None:
+            for alias in aliases:
+                data[alias] = manual_value
+                sources[alias] = "MANUAL"
+            continue
+
+        for alias in aliases:
+            sources.setdefault(alias, "LIVE")
 
     # Basic defaults with alias support to prevent crash if data missing
     def get_val(*keys: str, default=0.0):
@@ -175,7 +244,10 @@ async def get_live_data(unit_id: str) -> Dict:
         "recycle_valve_pct": get_val("recycle_valve_pct", "recycle_valve_position", default=0),
         
         # Active alarms
-        "active_alarms": []
+        "active_alarms": [],
+
+        # Parameter value source map
+        "sources": sources,
     }
 
 

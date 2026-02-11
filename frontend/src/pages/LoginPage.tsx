@@ -34,8 +34,8 @@ export function LoginPage() {
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-4">⚡</div>
-          <h1 className="text-2xl font-bold text-white">GCS Digital Twin</h1>
-          <p className="text-slate-400 text-sm">Universal Compressor Platform</p>
+          <h1 className="text-2xl font-bold text-white">GCP MOTWAN</h1>
+          <p className="text-slate-400 text-sm">Compressor Operations Platform</p>
         </div>
 
         {/* Error Alert */}

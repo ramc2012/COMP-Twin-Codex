@@ -160,9 +160,19 @@ async def get_modbus_config(
         }
         yaml_match = yaml_by_address.get(int(m.address)) or yaml_by_name.get((m.name or "").strip().lower())
         if yaml_match:
-            for opt in ("default", "nominal", "min", "max", "noise"):
+            for opt in ("default", "nominal", "min", "max", "noise", "value_mode", "manual_value", "type"):
                 if opt in yaml_match:
                     item[opt] = yaml_match[opt]
+            if "value_mode" in item:
+                item["valueMode"] = str(item["value_mode"]).upper()
+            if "manual_value" in item:
+                item["manualValue"] = item["manual_value"]
+            if "type" in item:
+                item["type"] = item["type"]
+        if "valueMode" not in item:
+            item["valueMode"] = "LIVE"
+        if "manualValue" not in item:
+            item["manualValue"] = None
         merged_registers.append(item)
 
     return {
@@ -301,12 +311,22 @@ async def update_modbus_config(
                 if 'max' in r: reg_dict['max'] = r['max']
                 if 'unit' in r: reg_dict['unit'] = r['unit']
                 if 'noise' in r: reg_dict['noise'] = r['noise']
+                if 'type' in r: reg_dict['type'] = r['type']
                 if 'defaultValue' in r and 'default' not in reg_dict:
                     reg_dict['default'] = r['defaultValue']
                 if 'currentValue' in r:
                     reg_dict['nominal'] = r['currentValue']
                     if 'default' not in reg_dict:
                         reg_dict['default'] = r['currentValue']
+                mode_raw = r.get('valueMode', r.get('value_mode', 'LIVE'))
+                mode = str(mode_raw).upper() if mode_raw is not None else 'LIVE'
+                reg_dict['value_mode'] = 'MANUAL' if mode == 'MANUAL' else 'LIVE'
+                manual_raw = r.get('manualValue', r.get('manual_value'))
+                if manual_raw is not None and manual_raw != "":
+                    try:
+                        reg_dict['manual_value'] = float(manual_raw)
+                    except (TypeError, ValueError):
+                        pass
                 
                 full_config["registers"].append(reg_dict)
 

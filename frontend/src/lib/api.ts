@@ -89,8 +89,6 @@ export interface TrendQuery {
     aggregation?: '1s' | '1m' | '5m' | '1h';
 }
 
-export type DataValueMode = 'LIVE' | 'MANUAL';
-
 // User Management Types
 export interface User {
     username: string;
@@ -229,6 +227,17 @@ export async function createUnit(unit: UnitCreateRequest): Promise<{ status: str
     return response.json();
 }
 
+export async function deleteUnit(unitId: string): Promise<{ status: string; unit_id: string }> {
+    const response = await fetch(`${API_BASE}/units/${unitId}`, {
+        method: 'DELETE',
+        headers: authHeaders()
+    });
+    if (!response.ok) {
+        throw new Error(await getApiErrorMessage(response, 'Failed to delete package'));
+    }
+    return response.json();
+}
+
 export async function fetchUnitSummary(unitId: string): Promise<any> {
     const response = await fetch(`${API_BASE}/units/${unitId}/summary`);
     if (!response.ok) throw new Error('Failed to fetch package summary');
@@ -247,21 +256,6 @@ export async function fetchResolvedData(unitId: string = 'GCS-001'): Promise<Liv
     const response = await fetch(`${API_BASE}/units/${unitId}/resolved`);
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
     return response.json();
-}
-
-// ============ DATA MODE ============
-
-function dataModeStorageKey(unitId: string): string {
-    return `gcs_data_value_mode_${unitId}`;
-}
-
-export function getDataValueMode(unitId: string): DataValueMode {
-    const raw = localStorage.getItem(dataModeStorageKey(unitId));
-    return raw === 'MANUAL' ? 'MANUAL' : 'LIVE';
-}
-
-export function setDataValueMode(unitId: string, mode: DataValueMode) {
-    localStorage.setItem(dataModeStorageKey(unitId), mode);
 }
 
 // ============ CONFIG ============

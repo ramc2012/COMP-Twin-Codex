@@ -4,6 +4,7 @@ import {
     Bar,
     BarChart,
     CartesianGrid,
+    Legend,
     Line,
     LineChart,
     ReferenceLine,
@@ -14,7 +15,7 @@ import {
 } from 'recharts';
 import { useDataStore } from '../store/useDataStore';
 import { useUnit } from '../contexts/UnitContext';
-import { createWebSocket, fetchLiveData, fetchResolvedData, getDataValueMode, type DataValueMode } from '../lib/api';
+import { createWebSocket, fetchLiveData } from '../lib/api';
 import { MetricCard } from '../components/MetricCard';
 import { StageCard } from '../components/StageCard';
 
@@ -91,11 +92,8 @@ export function Dashboard() {
     const { unitId, setUnitId, units } = useUnit();
     const { liveData, isLoading, error, setLiveData, clearLiveData, setError } = useDataStore();
     const [wsConnected, setWsConnected] = useState(false);
-    const [dataMode, setDataMode] = useState<DataValueMode>('LIVE');
-
-    useEffect(() => {
-        setDataMode(getDataValueMode(unitId));
-    }, [unitId]);
+    const [hoveredGraph, setHoveredGraph] = useState<'pressure' | 'thermal' | 'control' | null>(null);
+    const legendLabel = (value: string) => <span style={{ color: '#cbd5e1' }}>{value}</span>;
 
     useEffect(() => {
         let isMounted = true;
@@ -108,7 +106,7 @@ export function Dashboard() {
             if (!isMounted || !payload) return false;
             if (typeof payload.engine_state !== 'number') {
                 clearLiveData();
-                setError(`No ${dataMode.toLowerCase()} data available for ${unitId}`);
+                setError(`No live data available for ${unitId}`);
                 return false;
             }
             setLiveData(payload as any);
@@ -117,7 +115,6 @@ export function Dashboard() {
         };
 
         const connectWebSocket = () => {
-            if (dataMode !== 'LIVE') return;
             if (!isMounted) return;
             ws = createWebSocket(
                 unitId,
@@ -148,15 +145,13 @@ export function Dashboard() {
         };
 
         const fetchData = async () => {
-            if (dataMode === 'LIVE' && wsActive) return;
+            if (wsActive) return;
             try {
-                const data = dataMode === 'MANUAL'
-                    ? await fetchResolvedData(unitId)
-                    : await fetchLiveData(unitId);
+                const data = await fetchLiveData(unitId);
                 applyLiveData(data);
             } catch (e: any) {
                 clearLiveData();
-                setError(`Failed to fetch ${dataMode.toLowerCase()} data: ${e?.message || e}`);
+                setError(`Failed to fetch live data: ${e?.message || e}`);
             }
         };
 
@@ -171,7 +166,7 @@ export function Dashboard() {
             if (reconnectTimer) clearTimeout(reconnectTimer);
             if (ws && ws.readyState <= 1) ws.close();
         };
-    }, [unitId, dataMode, setLiveData, clearLiveData, setError]);
+    }, [unitId, setLiveData, clearLiveData, setError]);
 
     if (isLoading && !liveData) {
         return (
@@ -201,7 +196,17 @@ export function Dashboard() {
 
     const engineState = ENGINE_STATES[liveData.engine_state] || { label: 'UNKNOWN', color: 'bg-slate-500' };
     const sources = (liveData as any).sources || {};
-    const getQuality = (param: string): any => (dataMode === 'LIVE' ? 'LIVE' : (sources[param] || 'LIVE'));
+    const getQuality = (param: string): any => {
+        const sourceAliases: Record<string, string[]> = {
+            engine_oil_press: ['engine_oil_press', 'engine_oil_pressure'],
+            comp_oil_press: ['comp_oil_press', 'comp_oil_pressure'],
+        };
+        const keys = sourceAliases[param] || [param];
+        for (const key of keys) {
+            if (sources[key]) return sources[key];
+        }
+        return 'LIVE';
+    };
 
     const health = computeHealthScore(liveData);
     const tone = healthTone(health);
@@ -242,10 +247,6 @@ export function Dashboard() {
                         <div>
                             <h1 className="text-3xl font-bold text-white">Compressor Health Cockpit</h1>
                             <p className="text-slate-300 mt-1">Unit {unitId} operational clarity with pressure, thermal, and control health context.</p>
-                            <div className="mt-2 inline-flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-600/60 bg-slate-800/40">
-                                <span className="text-[11px] uppercase tracking-wide text-slate-400">Value Mode</span>
-                                <span className={`text-xs font-semibold ${dataMode === 'LIVE' ? 'text-emerald-300' : 'text-amber-300'}`}>{dataMode}</span>
-                            </div>
                             <div className="flex gap-2 mt-3 flex-wrap">
                                 {units.map((unit, index) => (
                                     <button
@@ -274,13 +275,9 @@ export function Dashboard() {
                         </div>
 
                             <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${
-                                    dataMode === 'MANUAL'
-                                        ? 'bg-amber-400'
-                                        : (wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400')
-                                }`} />
+                                <div className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
                                 <span className="text-sm text-slate-300">
-                                    {dataMode === 'MANUAL' ? 'Resolved Polling' : (wsConnected ? 'WebSocket' : 'Polling')}
+                                    {wsConnected ? 'WebSocket' : 'Polling'}
                                 </span>
                             </div>
 
@@ -369,8 +366,17 @@ export function Dashboard() {
             </section>
 
             <section className="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-6">
-                <div className="glass-card p-5 border border-slate-700/50">
+                <div
+                    className="glass-card p-5 border border-slate-700/50 relative"
+                    onMouseEnter={() => setHoveredGraph('pressure')}
+                    onMouseLeave={() => setHoveredGraph(null)}
+                >
                     <h2 className="text-lg font-semibold text-slate-100 mb-3">Pressure Ladder by Stage</h2>
+                    {hoveredGraph === 'pressure' && (
+                        <div className="absolute right-4 top-4 max-w-xs rounded-lg border border-cyan-500/35 bg-slate-950/90 px-3 py-2 text-[11px] text-cyan-100">
+                            Compares suction and discharge pressure stage-by-stage to quickly spot compression imbalance.
+                        </div>
+                    )}
                     <div className="h-56">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={pressureProfile} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
@@ -378,15 +384,25 @@ export function Dashboard() {
                                 <XAxis dataKey="stage" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                                 <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
                                 <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
-                                <Bar dataKey="suction" fill="#22d3ee" radius={[6, 6, 0, 0]} />
-                                <Bar dataKey="discharge" fill="#818cf8" radius={[6, 6, 0, 0]} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendLabel} />
+                                <Bar dataKey="suction" name="Suction Pressure" fill="#22d3ee" radius={[6, 6, 0, 0]} />
+                                <Bar dataKey="discharge" name="Discharge Pressure" fill="#818cf8" radius={[6, 6, 0, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
                 </div>
 
-                <div className="glass-card p-5 border border-slate-700/50">
+                <div
+                    className="glass-card p-5 border border-slate-700/50 relative"
+                    onMouseEnter={() => setHoveredGraph('thermal')}
+                    onMouseLeave={() => setHoveredGraph(null)}
+                >
                     <h2 className="text-lg font-semibold text-slate-100 mb-3">Thermal Delta Lens</h2>
+                    {hoveredGraph === 'thermal' && (
+                        <div className="absolute right-4 top-4 max-w-xs rounded-lg border border-amber-500/35 bg-slate-950/90 px-3 py-2 text-[11px] text-amber-100">
+                            Tracks actual discharge temperature against ideal model values to reveal heat inefficiency early.
+                        </div>
+                    )}
                     <div className="h-56">
                         <ResponsiveContainer width="100%" height="100%">
                             <LineChart data={thermalProfile} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
@@ -395,8 +411,9 @@ export function Dashboard() {
                                 <YAxis stroke="#94a3b8" tick={{ fontSize: 12 }} />
                                 <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
                                 <ReferenceLine y={350} stroke="#f97316" strokeDasharray="4 4" />
-                                <Line type="monotone" dataKey="actual" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} />
-                                <Line type="monotone" dataKey="ideal" stroke="#38bdf8" strokeWidth={2} dot={{ r: 2 }} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendLabel} />
+                                <Line type="monotone" dataKey="actual" name="Actual Temperature" stroke="#f59e0b" strokeWidth={2.5} dot={{ r: 3 }} />
+                                <Line type="monotone" dataKey="ideal" name="Ideal Temperature" stroke="#38bdf8" strokeWidth={2} dot={{ r: 2 }} />
                             </LineChart>
                         </ResponsiveContainer>
                     </div>
@@ -414,8 +431,17 @@ export function Dashboard() {
             </section>
 
             <section className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-5">
-                <div className="glass-card p-5 border border-slate-700/50">
+                <div
+                    className="glass-card p-5 border border-slate-700/50 relative"
+                    onMouseEnter={() => setHoveredGraph('control')}
+                    onMouseLeave={() => setHoveredGraph(null)}
+                >
                     <h2 className="text-lg font-semibold text-slate-100 mb-3">Control Envelope</h2>
+                    {hoveredGraph === 'control' && (
+                        <div className="absolute right-4 top-4 max-w-xs rounded-lg border border-emerald-500/35 bg-slate-950/90 px-3 py-2 text-[11px] text-emerald-100">
+                            Shows live valve and speed command percentages against target control bands for action validation.
+                        </div>
+                    )}
                     <div className="h-56">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={controlProfile} layout="vertical" margin={{ top: 8, right: 20, left: 20, bottom: 8 }}>
@@ -424,7 +450,9 @@ export function Dashboard() {
                                 <YAxis type="category" dataKey="axis" stroke="#94a3b8" tick={{ fontSize: 12 }} />
                                 <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 8 }} />
                                 <ReferenceLine x={65} stroke="#94a3b8" strokeDasharray="4 4" />
-                                <Bar dataKey="value" fill="#22c55e" radius={[0, 6, 6, 0]} />
+                                <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendLabel} />
+                                <Bar dataKey="value" name="Actual Value" fill="#22c55e" radius={[0, 6, 6, 0]} />
+                                <Bar dataKey="target" name="Target Value" fill="#64748b" radius={[0, 6, 6, 0]} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

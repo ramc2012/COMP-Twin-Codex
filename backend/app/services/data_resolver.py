@@ -84,14 +84,14 @@ class TwoStateDataResolver:
             'set_at': datetime.now(),
             'expires_at': expires_at
         }
-        logger.info(f"Manual override set: {unit_id}.{parameter} = {value}")
+        logger.debug(f"Manual override set: {unit_id}.{parameter} = {value}")
     
     def clear_manual_value(self, unit_id: str, parameter: str):
         """Clear a manual override."""
         unit_manual = self.manual_values.get(unit_id, {})
         if parameter in unit_manual:
             del unit_manual[parameter]
-            logger.info(f"Manual override cleared: {unit_id}.{parameter}")
+            logger.debug(f"Manual override cleared: {unit_id}.{parameter}")
     
     def get_manual_value(self, unit_id: str, parameter: str) -> Optional[float]:
         """Get manual override if valid."""

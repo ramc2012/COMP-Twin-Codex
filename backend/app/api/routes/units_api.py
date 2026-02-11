@@ -287,7 +287,10 @@ async def get_live_data(unit_id: str) -> Dict:
 
 
 @router.get("/{unit_id}/resolved")
-async def get_resolved_data(unit_id: str) -> Dict:
+async def get_resolved_data(
+    unit_id: str,
+    db: AsyncSession = Depends(get_db)
+) -> Dict:
     """
     Get resolved data with quality indicators.
     Returns values with source (LIVE or MANUAL) for each parameter.
@@ -303,15 +306,44 @@ async def get_resolved_data(unit_id: str) -> Dict:
     
     # Get raw live data
     live_data = _normalize_live_keys(manager.get_live_data(unit_id))
-    if not live_data or len(live_data) < 5:
-        from app.services.data_simulator import DataSimulator
-        simulator = DataSimulator()
-        live_data = simulator.generate_snapshot()
-        manager.update_live_data(unit_id, live_data)
+    if not live_data:
+        live_data = {}
     
     # Resolve through the two-state resolver
     resolver = get_data_resolver()
-    resolved = resolver.resolve_all(unit_id, live_data)
+    parameters = None
+    try:
+        from app.api.routes.modbus_config import get_modbus_config as load_modbus_config
+        modbus_config = await load_modbus_config(unit_id=unit_id, db=db)
+        configured_registers = modbus_config.get("registers", []) or []
+        configured_names = []
+
+        for reg in configured_registers:
+            name = reg.get("name")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            name = name.strip()
+            configured_names.append(name)
+
+            mode_raw = reg.get("valueMode", reg.get("value_mode", "LIVE"))
+            mode = "MANUAL" if str(mode_raw).upper() == "MANUAL" else "LIVE"
+            manual_raw = reg.get("manualValue", reg.get("manual_value"))
+
+            if mode == "MANUAL" and manual_raw not in (None, ""):
+                try:
+                    resolver.set_manual_value(unit_id, name, float(manual_raw))
+                except (TypeError, ValueError):
+                    resolver.clear_manual_value(unit_id, name)
+            else:
+                resolver.clear_manual_value(unit_id, name)
+
+        if configured_names:
+            parameters = configured_names
+    except Exception:
+        # Keep endpoint resilient even if config lookup fails.
+        parameters = None
+
+    resolved = resolver.resolve_all(unit_id, live_data, parameters)
     
     return {
         "unit_id": unit_id,
