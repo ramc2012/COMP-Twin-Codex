@@ -1,0 +1,15 @@
+
+> temp-vite@0.0.0 build
+> tsc -b && vite build
+
+src/App.tsx(4,40): error TS6133: 'Navigate' is declared but its value is never read.
+src/App.tsx(23,9): error TS6133: 'isAuthenticated' is declared but its value is never read.
+src/components/Layout.tsx(12,9): error TS6133: 'location' is declared but its value is never read.
+src/components/MetricCard.tsx(4,1): error TS6133: 'React' is declared but its value is never read.
+src/components/PTDiagram.tsx(5,10): error TS6133: 'LineChart' is declared but its value is never read.
+src/components/PTDiagram.tsx(82,13): error TS2322: Type '(value: number, name: string) => [string, "Pressure" | "Temperature"]' is not assignable to type 'Formatter<number, string> & ((value: number, name: string, item: Payload<number, string>, index: number, payload: Payload<number, string>[]) => ReactNode | [...])'.
+  Type '(value: number, name: string) => [string, "Pressure" | "Temperature"]' is not assignable to type 'Formatter<number, string>'.
+    Types of parameters 'value' and 'value' are incompatible.
+      Type 'number | undefined' is not assignable to type 'number'.
+        Type 'undefined' is not assignable to type 'number'.
+src/components/PTDiagram.tsx(86,30): error TS6133: 'label' is declared but its value is never read.

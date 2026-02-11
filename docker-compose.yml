@@ -1,0 +1,155 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Configuration database
+  postgres:
+    image: postgres:15-alpine
+    container_name: gcs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gcs_user
+      POSTGRES_PASSWORD: gcs_password
+      POSTGRES_DB: gcs_twin
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U gcs_user -d gcs_twin" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis - Real-time data caching & Celery broker
+  redis:
+    image: redis:7-alpine
+    container_name: gcs-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # InfluxDB - Time series history
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: gcs-influxdb
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: gcs_admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: gcs_admin_password
+      DOCKER_INFLUXDB_INIT_ORG: gcs_ops
+      DOCKER_INFLUXDB_INIT_BUCKET: gcs_history
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: my-super-secret-admin-token
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    ports:
+      - "8086:8086"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8086/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Modbus Simulator
+  simulator:
+    build:
+      context: ./modbus-simulator
+    container_name: gcs-simulator
+    restart: unless-stopped
+    ports:
+      - "5020:5020"
+    volumes:
+      - ./modbus-simulator:/app
+      - ./shared_config/registers.yaml:/app/register_config.yaml
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gcs-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_healthy
+      simulator:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gcs_user:gcs_password@postgres:5432/gcs_twin
+      REDIS_URL: redis://redis:6379
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: my-super-secret-admin-token
+      INFLUXDB_ORG: gcs_ops
+      INFLUXDB_BUCKET: gcs_history
+      # Modbus Configuration
+      MODBUS_ENABLED: "true"
+      MODBUS_HOST: "simulator"
+      MODBUS_PORT: "5020"
+      MODBUS_SLAVE_ID: "1"
+    volumes:
+      - ./backend:/app
+      - ./shared_config:/app/shared_config
+    ports:
+      - "8000:8000"
+
+  # Celery Worker - Background tasks
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gcs-celery-worker
+    restart: unless-stopped
+    command: celery -A app.celery_app worker --loglevel=info
+    depends_on:
+      - redis
+      - postgres
+      - backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://gcs_user:gcs_password@postgres:5432/gcs_twin
+      REDIS_URL: redis://redis:6379
+      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_TOKEN: my-super-secret-admin-token
+    volumes:
+      - ./backend:/app
+
+  # Celery Beat - Scheduled tasks
+  celery-beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: gcs-celery-beat
+    restart: unless-stopped
+    command: celery -A app.celery_app beat --loglevel=info
+    depends_on:
+      - redis
+      - celery-worker
+    environment:
+      REDIS_URL: redis://redis:6379
+    volumes:
+      - ./backend:/app
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: gcs-frontend
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  influxdb_data:

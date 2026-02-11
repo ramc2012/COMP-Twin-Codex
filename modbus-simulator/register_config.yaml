@@ -1,0 +1,651 @@
+# GCS Modbus Register Configuration
+# This defines the complete register map for a gas compressor system
+
+server:
+  host: "0.0.0.0"
+  port: 5020
+  slave_id: 1
+
+simulation:
+  update_interval_ms: 100
+  noise_enabled: true
+  trend_enabled: true
+
+# Engine States
+engine_states:
+  0: STOPPED
+  1: PRE_LUBE
+  2: CRANKING
+  3: IDLE_WARMUP
+  4: LOADING
+  8: RUNNING
+  16: UNLOADING
+  32: COOLDOWN
+  64: SHUTDOWN
+  255: FAULT
+
+registers:
+  # ============================================================
+  # SYSTEM STATUS (0-99)
+  # ============================================================
+  - address: 0
+    name: engine_state
+    description: "Current engine state code"
+    data_type: UINT16
+    default: 8  # RUNNING
+    category: system
+    
+  - address: 1
+    name: fault_code
+    description: "Active fault code (255 = no fault)"
+    data_type: UINT16
+    default: 255
+    category: system
+    
+  - address: 2
+    name: hour_meter_high
+    description: "Hour meter high word"
+    data_type: UINT16
+    default: 0
+    category: system
+    
+  - address: 3
+    name: hour_meter_low
+    description: "Hour meter low word (x10 = hours)"
+    data_type: UINT16
+    default: 145237  # 14523.7 hours
+    category: system
+
+  # ============================================================
+  # ENGINE VITALS (100-199)
+  # ============================================================
+  - address: 100
+    name: engine_rpm
+    description: "Engine speed"
+    data_type: UINT16
+    unit: RPM
+    min: 0
+    max: 1800
+    nominal: 1200
+    noise: 5
+    category: engine
+    
+  - address: 101
+    name: engine_oil_pressure
+    description: "Engine oil pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 0
+    max: 100
+    nominal: 65
+    noise: 2
+    category: engine
+    
+  - address: 102
+    name: engine_oil_temp
+    description: "Engine oil temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 60
+    max: 250
+    nominal: 185
+    noise: 3
+    category: engine
+    
+  - address: 103
+    name: jacket_water_temp
+    description: "Jacket water temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 60
+    max: 220
+    nominal: 180
+    noise: 2
+    category: engine
+    
+  - address: 104
+    name: manifold_pressure
+    description: "Intake manifold pressure"
+    data_type: UINT16
+    unit: inHg
+    scale: 0.1
+    min: 0
+    max: 50
+    nominal: 35
+    noise: 1
+    category: engine
+
+  # ============================================================
+  # COMPRESSOR VITALS (200-299)
+  # ============================================================
+  - address: 200
+    name: comp_oil_pressure
+    description: "Compressor oil pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 0
+    max: 80
+    nominal: 55
+    noise: 2
+    category: compressor
+    
+  - address: 201
+    name: comp_oil_temp
+    description: "Compressor oil temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 60
+    max: 200
+    nominal: 150
+    noise: 3
+    category: compressor
+    
+  - address: 202
+    name: suction_scrubber_level
+    description: "Suction scrubber liquid level"
+    data_type: UINT16
+    unit: percent
+    scale: 0.1
+    min: 0
+    max: 100
+    nominal: 15
+    noise: 2
+    category: compressor
+
+  # ============================================================
+  # STAGE 1 (300-399)
+  # ============================================================
+  - address: 300
+    name: stg1_suction_pressure
+    description: "Stage 1 suction pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 50
+    max: 150
+    nominal: 85
+    noise: 2
+    category: stage1
+    
+  - address: 301
+    name: stg1_discharge_pressure
+    description: "Stage 1 discharge pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 200
+    max: 400
+    nominal: 330
+    noise: 3
+    category: stage1
+    
+  - address: 302
+    name: stg1_suction_temp
+    description: "Stage 1 suction temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 40
+    max: 120
+    nominal: 80
+    noise: 2
+    category: stage1
+    
+  - address: 303
+    name: stg1_discharge_temp
+    description: "Stage 1 discharge temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 200
+    max: 350
+    nominal: 285
+    noise: 4
+    category: stage1
+
+  # ============================================================
+  # STAGE 2 (400-499)
+  # ============================================================
+  - address: 400
+    name: stg2_suction_pressure
+    description: "Stage 2 suction pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 200
+    max: 380
+    nominal: 320
+    noise: 3
+    category: stage2
+    
+  - address: 401
+    name: stg2_discharge_pressure
+    description: "Stage 2 discharge pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 400
+    max: 600
+    nominal: 510
+    noise: 4
+    category: stage2
+    
+  - address: 402
+    name: stg2_suction_temp
+    description: "Stage 2 suction temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 180
+    max: 320
+    nominal: 270
+    noise: 3
+    category: stage2
+    
+  - address: 403
+    name: stg2_discharge_temp
+    description: "Stage 2 discharge temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 280
+    max: 420
+    nominal: 360
+    noise: 4
+    category: stage2
+
+  # ============================================================
+  # STAGE 3 (500-599)
+  # ============================================================
+  - address: 500
+    name: stg3_suction_pressure
+    description: "Stage 3 suction pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 400
+    max: 580
+    nominal: 505
+    noise: 4
+    category: stage3
+    
+  - address: 501
+    name: stg3_discharge_pressure
+    description: "Stage 3 discharge pressure"
+    data_type: UINT16
+    unit: PSIG
+    scale: 0.1
+    min: 800
+    max: 1200
+    nominal: 1050
+    noise: 5
+    category: stage3
+    
+  - address: 502
+    name: stg3_suction_temp
+    description: "Stage 3 suction temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 280
+    max: 400
+    nominal: 345
+    noise: 3
+    category: stage3
+    
+  - address: 503
+    name: stg3_discharge_temp
+    description: "Stage 3 discharge temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    min: 420
+    max: 580
+    nominal: 520
+    noise: 5
+    category: stage3
+
+  # ============================================================
+  # EXHAUST TEMPERATURES (600-699)
+  # ============================================================
+  - address: 600
+    name: exh_cyl1_left
+    description: "Cylinder 1 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 950
+    noise: 15
+    category: exhaust
+    
+  - address: 601
+    name: exh_cyl1_right
+    description: "Cylinder 1 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 960
+    noise: 15
+    category: exhaust
+    
+  - address: 602
+    name: exh_cyl2_left
+    description: "Cylinder 2 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 945
+    noise: 15
+    category: exhaust
+    
+  - address: 603
+    name: exh_cyl2_right
+    description: "Cylinder 2 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 955
+    noise: 15
+    category: exhaust
+    
+  - address: 604
+    name: exh_cyl3_left
+    description: "Cylinder 3 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 940
+    noise: 15
+    category: exhaust
+    
+  - address: 605
+    name: exh_cyl3_right
+    description: "Cylinder 3 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 965
+    noise: 15
+    category: exhaust
+    
+  - address: 606
+    name: exh_cyl4_left
+    description: "Cylinder 4 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 935
+    noise: 15
+    category: exhaust
+    
+  - address: 607
+    name: exh_cyl4_right
+    description: "Cylinder 4 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 970
+    noise: 15
+    category: exhaust
+    
+  - address: 608
+    name: exh_cyl5_left
+    description: "Cylinder 5 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 948
+    noise: 15
+    category: exhaust
+    
+  - address: 609
+    name: exh_cyl5_right
+    description: "Cylinder 5 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 958
+    noise: 15
+    category: exhaust
+    
+  - address: 610
+    name: exh_cyl6_left
+    description: "Cylinder 6 Left exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 942
+    noise: 15
+    category: exhaust
+    
+  - address: 611
+    name: exh_cyl6_right
+    description: "Cylinder 6 Right exhaust temp"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 962
+    noise: 15
+    category: exhaust
+    
+  - address: 620
+    name: pre_turbo_left
+    description: "Pre-turbo exhaust left bank"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 1050
+    noise: 20
+    category: exhaust
+    
+  - address: 621
+    name: pre_turbo_right
+    description: "Pre-turbo exhaust right bank"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 1060
+    noise: 20
+    category: exhaust
+    
+  - address: 622
+    name: post_turbo_left
+    description: "Post-turbo exhaust left bank"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 750
+    noise: 15
+    category: exhaust
+    
+  - address: 623
+    name: post_turbo_right
+    description: "Post-turbo exhaust right bank"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 760
+    noise: 15
+    category: exhaust
+
+  # ============================================================
+  # BEARING TEMPERATURES (700-799)
+  # ============================================================
+  - address: 700
+    name: main_bearing_1
+    description: "Main bearing 1 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 170
+    noise: 3
+    category: bearings
+    
+  - address: 701
+    name: main_bearing_2
+    description: "Main bearing 2 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 168
+    noise: 3
+    category: bearings
+    
+  - address: 702
+    name: main_bearing_3
+    description: "Main bearing 3 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 172
+    noise: 3
+    category: bearings
+    
+  - address: 703
+    name: main_bearing_4
+    description: "Main bearing 4 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 169
+    noise: 3
+    category: bearings
+    
+  - address: 704
+    name: main_bearing_5
+    description: "Main bearing 5 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 171
+    noise: 3
+    category: bearings
+    
+  - address: 705
+    name: main_bearing_6
+    description: "Main bearing 6 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 167
+    noise: 3
+    category: bearings
+    
+  - address: 706
+    name: main_bearing_7
+    description: "Main bearing 7 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 173
+    noise: 3
+    category: bearings
+    
+  - address: 707
+    name: main_bearing_8
+    description: "Main bearing 8 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 170
+    noise: 3
+    category: bearings
+    
+  - address: 708
+    name: main_bearing_9
+    description: "Main bearing 9 temperature"
+    data_type: UINT16
+    unit: degF
+    scale: 0.1
+    nominal: 168
+    noise: 3
+    category: bearings
+
+  # ============================================================
+  # CONTROL OUTPUTS (800-899)
+  # ============================================================
+  - address: 800
+    name: suction_valve_position
+    description: "Suction valve position"
+    data_type: UINT16
+    unit: percent
+    scale: 0.1
+    nominal: 75
+    noise: 2
+    category: controls
+    
+  - address: 801
+    name: recycle_valve_position
+    description: "Recycle valve position"
+    data_type: UINT16
+    unit: percent
+    scale: 0.1
+    nominal: 0
+    noise: 0
+    category: controls
+    
+  - address: 802
+    name: blowdown_valve_status
+    description: "Blowdown valve status (0=closed, 1=open)"
+    data_type: UINT16
+    default: 0
+    category: controls
+    
+  - address: 803
+    name: speed_control_output
+    description: "Speed control output"
+    data_type: UINT16
+    unit: percent
+    scale: 0.1
+    nominal: 82
+    noise: 1
+    category: controls
+    
+  - address: 804
+    name: gas_detector_compressor
+    description: "Gas detector at compressor"
+    data_type: UINT16
+    unit: percentLEL
+    scale: 0.1
+    nominal: 0.5
+    noise: 0.3
+    category: safety
+    
+  - address: 805
+    name: gas_detector_engine
+    description: "Gas detector at engine"
+    data_type: UINT16
+    unit: percentLEL
+    scale: 0.1
+    nominal: 0.3
+    noise: 0.2
+    category: safety
+
+  # ============================================================
+  # ALARMS (900-999) - Bit-packed status words
+  # ============================================================
+  - address: 900
+    name: alarm_word_1
+    description: "Alarm status word 1 (engine alarms)"
+    data_type: UINT16
+    default: 0
+    category: alarms
+    
+  - address: 901
+    name: alarm_word_2
+    description: "Alarm status word 2 (compressor alarms)"
+    data_type: UINT16
+    default: 0
+    category: alarms
+    
+  - address: 902
+    name: shutdown_word
+    description: "Shutdown status word"
+    data_type: UINT16
+    default: 0
+    category: alarms

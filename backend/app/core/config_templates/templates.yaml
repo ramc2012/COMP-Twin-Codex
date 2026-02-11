@@ -1,0 +1,234 @@
+# Configuration Templates
+# Pre-built templates for common controllers and engines
+# Users can apply these to quickly configure their system
+
+templates:
+  # ============ CUSTOM TEMPLATES FOR NON-LISTED EQUIPMENT ============
+  
+  - id: "custom_controller"
+    name: "Custom Controller (Generic)"
+    category: "controller"
+    manufacturer: "User Defined"
+    description: "Generic controller template - customize addresses and scales for your equipment"
+    is_custom: true
+    modbus_settings:
+      slave_id: 1
+      baud_rate: 9600
+      parity: "N"
+      data_bits: 8
+      stop_bits: 1
+    registers:
+      # Engine Parameters - Update addresses to match your controller
+      - { address: 0, name: "engine_rpm", scale: 1.0, group: "A", description: "Engine Speed (RPM)" }
+      - { address: 1, name: "engine_load", scale: 0.1, group: "A", description: "Engine Load (%)" }
+      - { address: 2, name: "oil_pressure", scale: 0.1, group: "A", description: "Lube Oil Pressure (PSI)" }
+      - { address: 3, name: "coolant_temp", scale: 0.1, group: "A", description: "Coolant Temperature (°F)" }
+      - { address: 4, name: "oil_temp", scale: 0.1, group: "A", description: "Oil Temperature (°F)" }
+      - { address: 5, name: "manifold_temp", scale: 0.1, group: "B", description: "Intake Manifold Temp (°F)" }
+      # Compressor Parameters
+      - { address: 10, name: "stg1_suction_pressure", scale: 0.1, group: "A", description: "Stage 1 Suction (PSIG)" }
+      - { address: 11, name: "stg1_discharge_pressure", scale: 0.1, group: "A", description: "Stage 1 Discharge (PSIG)" }
+      - { address: 12, name: "stg1_suction_temp", scale: 0.1, group: "A", description: "Stage 1 Suction Temp (°F)" }
+      - { address: 13, name: "stg1_discharge_temp", scale: 0.1, group: "A", description: "Stage 1 Discharge Temp (°F)" }
+      - { address: 20, name: "stg2_suction_pressure", scale: 0.1, group: "A", description: "Stage 2 Suction (PSIG)" }
+      - { address: 21, name: "stg2_discharge_pressure", scale: 0.1, group: "A", description: "Stage 2 Discharge (PSIG)" }
+      - { address: 22, name: "stg2_suction_temp", scale: 0.1, group: "A", description: "Stage 2 Suction Temp (°F)" }
+      - { address: 23, name: "stg2_discharge_temp", scale: 0.1, group: "A", description: "Stage 2 Discharge Temp (°F)" }
+      # Status and Alarms
+      - { address: 100, name: "engine_state", scale: 1.0, group: "A", description: "Engine State Code" }
+      - { address: 101, name: "alarm_word", scale: 1.0, group: "A", description: "Alarm Status Word" }
+      - { address: 102, name: "total_hours", scale: 0.1, group: "B", description: "Total Run Hours" }
+
+  - id: "custom_engine"
+    name: "Custom Engine (Generic)"
+    category: "engine"
+    manufacturer: "User Defined"
+    description: "Generic engine template - customize for your specific engine model"
+    is_custom: true
+    engine_specs:
+      cylinders: 6
+      bore_mm: 150
+      stroke_mm: 175
+      displacement_L: 20
+      max_rpm: 1200
+      rated_power_hp: 500
+    registers:
+      # Engine Core Parameters
+      - { address: 0, name: "engine_rpm", scale: 1.0, group: "A", description: "Engine Speed (RPM)" }
+      - { address: 1, name: "engine_load", scale: 0.1, group: "A", description: "Engine Load (%)" }
+      - { address: 2, name: "oil_pressure", scale: 0.1, group: "A", description: "Lube Oil Pressure (PSI)" }
+      - { address: 3, name: "coolant_temp", scale: 0.1, group: "A", description: "Jacket Water Temp (°F)" }
+      - { address: 4, name: "oil_temp", scale: 0.1, group: "B", description: "Oil Temperature (°F)" }
+      - { address: 5, name: "turbo_boost", scale: 0.1, group: "B", description: "Turbo Boost Pressure (PSI)" }
+      - { address: 6, name: "fuel_pressure", scale: 0.1, group: "B", description: "Fuel Pressure (PSI)" }
+      # Exhaust Temps (6 cylinders - add more as needed)
+      - { address: 100, name: "exh_cyl1_left", scale: 0.1, group: "B", description: "Cyl 1 Exhaust L (°F)" }
+      - { address: 101, name: "exh_cyl1_right", scale: 0.1, group: "B", description: "Cyl 1 Exhaust R (°F)" }
+      - { address: 102, name: "exh_cyl2_left", scale: 0.1, group: "B", description: "Cyl 2 Exhaust L (°F)" }
+      - { address: 103, name: "exh_cyl2_right", scale: 0.1, group: "B", description: "Cyl 2 Exhaust R (°F)" }
+      - { address: 104, name: "exh_cyl3_left", scale: 0.1, group: "B", description: "Cyl 3 Exhaust L (°F)" }
+      - { address: 105, name: "exh_cyl3_right", scale: 0.1, group: "B", description: "Cyl 3 Exhaust R (°F)" }
+      - { address: 106, name: "exh_cyl4_left", scale: 0.1, group: "B", description: "Cyl 4 Exhaust L (°F)" }
+      - { address: 107, name: "exh_cyl4_right", scale: 0.1, group: "B", description: "Cyl 4 Exhaust R (°F)" }
+      - { address: 108, name: "exh_cyl5_left", scale: 0.1, group: "B", description: "Cyl 5 Exhaust L (°F)" }
+      - { address: 109, name: "exh_cyl5_right", scale: 0.1, group: "B", description: "Cyl 5 Exhaust R (°F)" }
+      - { address: 110, name: "exh_cyl6_left", scale: 0.1, group: "B", description: "Cyl 6 Exhaust L (°F)" }
+      - { address: 111, name: "exh_cyl6_right", scale: 0.1, group: "B", description: "Cyl 6 Exhaust R (°F)" }
+      # Status
+      - { address: 200, name: "engine_state", scale: 1.0, group: "A", description: "Engine State" }
+      - { address: 201, name: "total_hours", scale: 0.1, group: "B", description: "Run Hours" }
+
+  - id: "custom_compressor"
+    name: "Custom Compressor (Generic)"
+    category: "compressor"
+    manufacturer: "User Defined"
+    description: "Generic 3-stage compressor template - customize for your specific frame"
+    is_custom: true
+    compressor_specs:
+      frame: "Custom"
+      stages: 3
+      cylinders: 6
+      max_rpm: 1200
+      max_rod_load_lb: 30000
+    registers:
+      # Stage 1 Parameters
+      - { address: 0, name: "stg1_suction_pressure", scale: 0.1, group: "A", description: "Stage 1 Suction (PSIG)" }
+      - { address: 1, name: "stg1_discharge_pressure", scale: 0.1, group: "A", description: "Stage 1 Discharge (PSIG)" }
+      - { address: 2, name: "stg1_suction_temp", scale: 0.1, group: "A", description: "Stage 1 Suction Temp (°F)" }
+      - { address: 3, name: "stg1_discharge_temp", scale: 0.1, group: "A", description: "Stage 1 Discharge Temp (°F)" }
+      # Stage 2 Parameters
+      - { address: 10, name: "stg2_suction_pressure", scale: 0.1, group: "A", description: "Stage 2 Suction (PSIG)" }
+      - { address: 11, name: "stg2_discharge_pressure", scale: 0.1, group: "A", description: "Stage 2 Discharge (PSIG)" }
+      - { address: 12, name: "stg2_suction_temp", scale: 0.1, group: "A", description: "Stage 2 Suction Temp (°F)" }
+      - { address: 13, name: "stg2_discharge_temp", scale: 0.1, group: "A", description: "Stage 2 Discharge Temp (°F)" }
+      # Stage 3 Parameters
+      - { address: 20, name: "stg3_suction_pressure", scale: 0.1, group: "A", description: "Stage 3 Suction (PSIG)" }
+      - { address: 21, name: "stg3_discharge_pressure", scale: 0.1, group: "A", description: "Stage 3 Discharge (PSIG)" }
+      - { address: 22, name: "stg3_suction_temp", scale: 0.1, group: "A", description: "Stage 3 Suction Temp (°F)" }
+      - { address: 23, name: "stg3_discharge_temp", scale: 0.1, group: "A", description: "Stage 3 Discharge Temp (°F)" }
+      # Vibration & Health
+      - { address: 50, name: "frame_vibration_x", scale: 0.01, group: "B", description: "Frame Vibration X (in/s)" }
+      - { address: 51, name: "frame_vibration_y", scale: 0.01, group: "B", description: "Frame Vibration Y (in/s)" }
+      - { address: 52, name: "packing_leak_1", scale: 0.1, group: "B", description: "Packing Leak Cyl 1 (SCFM)" }
+      - { address: 53, name: "packing_leak_2", scale: 0.1, group: "B", description: "Packing Leak Cyl 2 (SCFM)" }
+      # Capacity Control
+      - { address: 60, name: "capacity_step", scale: 1.0, group: "A", description: "Capacity Step (0-5)" }
+      - { address: 61, name: "suction_valve_status", scale: 1.0, group: "B", description: "Suction Valve Status" }
+
+  # ============ PRE-BUILT VENDOR TEMPLATES ============
+  
+  - id: "de4000"
+    name: "Dynalco DE-4000 Controller"
+    category: "controller"
+    manufacturer: "Dynalco Controls"
+    description: "Standard register map for DE-4000 compressor controller"
+    modbus_settings:
+      slave_id: 1
+      baud_rate: 9600
+      parity: "N"
+      data_bits: 8
+      stop_bits: 1
+    registers:
+      - { address: 0, name: "engine_rpm", scale: 1.0, group: "A", description: "Engine RPM" }
+      - { address: 1, name: "engine_load", scale: 0.1, group: "A", description: "Engine Load %" }
+      - { address: 2, name: "oil_pressure", scale: 0.1, group: "A", description: "Oil Pressure PSI" }
+      - { address: 3, name: "coolant_temp", scale: 0.1, group: "A", description: "Coolant Temp F" }
+      - { address: 10, name: "stg1_suction_pressure", scale: 0.1, group: "A", description: "Stage 1 Suction PSI" }
+      - { address: 11, name: "stg1_discharge_pressure", scale: 0.1, group: "A", description: "Stage 1 Discharge PSI" }
+      - { address: 12, name: "stg1_suction_temp", scale: 0.1, group: "A", description: "Stage 1 Suction Temp F" }
+      - { address: 13, name: "stg1_discharge_temp", scale: 0.1, group: "A", description: "Stage 1 Discharge Temp F" }
+      - { address: 20, name: "stg2_suction_pressure", scale: 0.1, group: "A", description: "Stage 2 Suction PSI" }
+      - { address: 21, name: "stg2_discharge_pressure", scale: 0.1, group: "A", description: "Stage 2 Discharge PSI" }
+      - { address: 100, name: "engine_state", scale: 1.0, group: "A", description: "Engine State Code" }
+      - { address: 101, name: "alarm_word", scale: 1.0, group: "A", description: "Alarm Status" }
+
+  - id: "murphy_centurion"
+    name: "Murphy Centurion Controller"
+    category: "controller"
+    manufacturer: "Murphy by Enovation"
+    description: "Murphy Centurion compressor/engine controller"
+    modbus_settings:
+      slave_id: 1
+      baud_rate: 19200
+      parity: "E"
+      data_bits: 8
+      stop_bits: 1
+    registers:
+      - { address: 40001, name: "engine_rpm", scale: 1.0, group: "A", description: "Engine Speed RPM" }
+      - { address: 40002, name: "engine_load", scale: 0.1, group: "A", description: "Load Percentage" }
+      - { address: 40010, name: "oil_pressure", scale: 0.1, group: "A", description: "Lube Oil Pressure" }
+      - { address: 40011, name: "coolant_temp", scale: 0.1, group: "A", description: "Jacket Water Temp" }
+      - { address: 40020, name: "stg1_suction_pressure", scale: 0.1, group: "A", description: "1st Stage Suction" }
+      - { address: 40021, name: "stg1_discharge_pressure", scale: 0.1, group: "A", description: "1st Stage Discharge" }
+      - { address: 40100, name: "engine_state", scale: 1.0, group: "A", description: "Operating State" }
+      - { address: 40200, name: "total_hours", scale: 0.1, group: "B", description: "Total Run Hours" }
+
+  - id: "cat_3500"
+    name: "CAT 3500 Series Engine"
+    category: "engine"
+    manufacturer: "Caterpillar"
+    description: "CAT 3500 series engine (3508, 3512, 3516)"
+    engine_specs:
+      cylinders: 16
+      bore_mm: 170
+      stroke_mm: 190
+      displacement_L: 69
+      max_rpm: 1200
+      rated_power_hp: 2000
+    exhaust_temp_registers:
+      - { address: 600, name: "exh_cyl1_left", scale: 0.1, group: "B" }
+      - { address: 601, name: "exh_cyl1_right", scale: 0.1, group: "B" }
+      - { address: 602, name: "exh_cyl2_left", scale: 0.1, group: "B" }
+      - { address: 603, name: "exh_cyl2_right", scale: 0.1, group: "B" }
+      - { address: 604, name: "exh_cyl3_left", scale: 0.1, group: "B" }
+      - { address: 605, name: "exh_cyl3_right", scale: 0.1, group: "B" }
+      - { address: 606, name: "exh_cyl4_left", scale: 0.1, group: "B" }
+      - { address: 607, name: "exh_cyl4_right", scale: 0.1, group: "B" }
+      - { address: 608, name: "exh_cyl5_left", scale: 0.1, group: "B" }
+      - { address: 609, name: "exh_cyl5_right", scale: 0.1, group: "B" }
+      - { address: 610, name: "exh_cyl6_left", scale: 0.1, group: "B" }
+      - { address: 611, name: "exh_cyl6_right", scale: 0.1, group: "B" }
+
+  - id: "waukesha_vhp"
+    name: "Waukesha VHP Series Engine"
+    category: "engine"
+    manufacturer: "Waukesha (INNIO)"
+    description: "Waukesha VHP L5794GSI engine"
+    engine_specs:
+      cylinders: 12
+      bore_mm: 152
+      stroke_mm: 165
+      displacement_L: 36
+      max_rpm: 1400
+      rated_power_hp: 1480
+    exhaust_temp_registers:
+      - { address: 700, name: "exh_cyl1_left", scale: 0.1, group: "B" }
+      - { address: 701, name: "exh_cyl1_right", scale: 0.1, group: "B" }
+      - { address: 702, name: "exh_cyl2_left", scale: 0.1, group: "B" }
+      - { address: 703, name: "exh_cyl2_right", scale: 0.1, group: "B" }
+      - { address: 704, name: "exh_cyl3_left", scale: 0.1, group: "B" }
+      - { address: 705, name: "exh_cyl3_right", scale: 0.1, group: "B" }
+
+  - id: "ariel_jgk"
+    name: "Ariel JGK Compressor"
+    category: "compressor"
+    manufacturer: "Ariel Corporation"
+    description: "Ariel JGK-4 frame compressor"
+    compressor_specs:
+      frame: "JGK"
+      cylinders: 4
+      max_rpm: 1200
+      max_rod_load_lb: 42000
+    registers:
+      - { address: 300, name: "stg1_suction_pressure", scale: 0.1, group: "A" }
+      - { address: 301, name: "stg1_discharge_pressure", scale: 0.1, group: "A" }
+      - { address: 302, name: "stg1_suction_temp", scale: 0.1, group: "A" }
+      - { address: 303, name: "stg1_discharge_temp", scale: 0.1, group: "A" }
+      - { address: 310, name: "stg2_suction_pressure", scale: 0.1, group: "A" }
+      - { address: 311, name: "stg2_discharge_pressure", scale: 0.1, group: "A" }
+      - { address: 312, name: "stg2_suction_temp", scale: 0.1, group: "A" }
+      - { address: 313, name: "stg2_discharge_temp", scale: 0.1, group: "A" }
+      - { address: 320, name: "stg3_suction_pressure", scale: 0.1, group: "A" }
+      - { address: 321, name: "stg3_discharge_pressure", scale: 0.1, group: "A" }
+      - { address: 350, name: "frame_vibration_x", scale: 0.01, group: "B" }
+      - { address: 351, name: "frame_vibration_y", scale: 0.01, group: "B" }
