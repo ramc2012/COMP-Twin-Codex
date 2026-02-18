@@ -45,6 +45,12 @@ interface ModbusServerConfig {
     real_port: number;
     sim_host: string;
     sim_port: number;
+    communication_mode: 'TCP_IP' | 'RS485_RTU';
+    serial_port: string;
+    baud_rate: number;
+    parity: 'N' | 'E' | 'O';
+    stop_bits: number;
+    byte_size: number;
 }
 
 interface CalibrationDialogState {
@@ -58,6 +64,25 @@ interface CalibrationDialogState {
 }
 
 export function ModbusMappingPage() {
+    const defaultServerSettings: ModbusServerConfig = {
+        host: 'simulator',
+        port: 5020,
+        slave_id: 1,
+        timeout_ms: 1000,
+        scan_rate_ms: 1000,
+        use_simulation: true,
+        real_host: '',
+        real_port: 502,
+        sim_host: 'simulator',
+        sim_port: 5020,
+        communication_mode: 'TCP_IP',
+        serial_port: '/dev/ttyUSB0',
+        baud_rate: 9600,
+        parity: 'N',
+        stop_bits: 1,
+        byte_size: 8
+    };
+
     const { unitId } = useUnit();
     const [isEditing, setIsEditing] = useState(false);
     const [config, setConfig] = useState<{ server: ModbusServerConfig; registers: RegisterMapping[] } | null>(null);
@@ -152,7 +177,15 @@ export function ModbusMappingPage() {
                 }));
                 setRegisters(fallback);
             }
-            setServerSettings(data.server || null);
+            const rawServer = data.server || {};
+            const normalizedServer: ModbusServerConfig = {
+                ...defaultServerSettings,
+                ...rawServer,
+                communication_mode: String(rawServer.communication_mode || 'TCP_IP').toUpperCase() === 'RS485_RTU' ? 'RS485_RTU' : 'TCP_IP',
+                parity: (['N', 'E', 'O'].includes(String(rawServer.parity || 'N').toUpperCase()) ? String(rawServer.parity || 'N').toUpperCase() : 'N') as 'N' | 'E' | 'O',
+                serial_port: String(rawServer.serial_port || '/dev/ttyUSB0')
+            };
+            setServerSettings(normalizedServer);
             setLastLoadedAt(new Date().toISOString());
         } catch (e) {
             console.error('Failed to load Modbus config:', e);
@@ -186,6 +219,17 @@ export function ModbusMappingPage() {
     const updateServerSetting = (field: keyof ModbusServerConfig, value: any) => {
         if (!serverSettings) return;
         setServerSettings({ ...serverSettings, [field]: value });
+    };
+
+    const activeConnectionLabel = () => {
+        if (!serverSettings) return 'N/A';
+        if (serverSettings.use_simulation) {
+            return `${serverSettings.sim_host}:${serverSettings.sim_port} (Simulation TCP)`;
+        }
+        if (serverSettings.communication_mode === 'RS485_RTU') {
+            return `${serverSettings.serial_port} (${serverSettings.baud_rate}, ${serverSettings.byte_size}${serverSettings.parity}${serverSettings.stop_bits})`;
+        }
+        return `${serverSettings.real_host || 'Not Set'}:${serverSettings.real_port || 502} (Real TCP)`;
     };
 
     const filteredRegisters = registers.filter(r =>
@@ -366,7 +410,7 @@ export function ModbusMappingPage() {
                     </div>
 
                     <div className="border-l border-slate-700 pl-4 text-sm text-slate-400">
-                        Active Connection: <span className="text-white font-mono">{serverSettings.use_simulation ? serverSettings.sim_host : (serverSettings.real_host || 'Not Set')} : {serverSettings.use_simulation ? serverSettings.sim_port : (serverSettings.real_port || 502)}</span>
+                        Active Connection: <span className="text-white font-mono">{activeConnectionLabel()}</span>
                     </div>
                 </div>
 
@@ -374,29 +418,104 @@ export function ModbusMappingPage() {
                     {/* Real World Settings */}
                     <div className={`p-4 rounded-lg border ${!serverSettings.use_simulation ? 'bg-slate-800/50 border-cyan-500/30' : 'bg-slate-900/30 border-slate-800 opacity-50'}`}>
                         <h3 className="text-sm font-semibold text-slate-300 mb-3 block">Real World PLC Settings</h3>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 gap-4">
                             <div>
-                                <label className="block text-xs text-slate-500 mb-1">IP Address</label>
-                                <input
-                                    type="text"
-                                    value={serverSettings.real_host || ''}
-                                    disabled={!isEditing}
-                                    onChange={(e) => updateServerSetting('real_host', e.target.value)}
-                                    placeholder="192.168.1.10"
+                                <label className="block text-xs text-slate-500 mb-1">Communication</label>
+                                <select
+                                    value={serverSettings.communication_mode}
+                                    disabled={!isEditing || serverSettings.use_simulation}
+                                    onChange={(e) => updateServerSetting('communication_mode', e.target.value === 'RS485_RTU' ? 'RS485_RTU' : 'TCP_IP')}
                                     className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
-                                />
+                                >
+                                    <option value="TCP_IP">TCP/IP</option>
+                                    <option value="RS485_RTU">RS485 (RTU)</option>
+                                </select>
                             </div>
-                            <div>
-                                <label className="block text-xs text-slate-500 mb-1">Port</label>
-                                <input
-                                    type="number"
-                                    value={serverSettings.real_port || ''}
-                                    disabled={!isEditing}
-                                    onChange={(e) => updateServerSetting('real_port', parseInt(e.target.value))}
-                                    placeholder="502"
-                                    className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
-                                />
-                            </div>
+
+                            {serverSettings.communication_mode === 'RS485_RTU' ? (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">Serial Port</label>
+                                        <input
+                                            type="text"
+                                            value={serverSettings.serial_port || ''}
+                                            disabled={!isEditing || serverSettings.use_simulation}
+                                            onChange={(e) => updateServerSetting('serial_port', e.target.value)}
+                                            placeholder="/dev/ttyUSB0"
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">Baud</label>
+                                        <input
+                                            type="number"
+                                            value={serverSettings.baud_rate || 9600}
+                                            disabled={!isEditing || serverSettings.use_simulation}
+                                            onChange={(e) => updateServerSetting('baud_rate', parseInt(e.target.value, 10) || 9600)}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">Parity</label>
+                                        <select
+                                            value={serverSettings.parity}
+                                            disabled={!isEditing || serverSettings.use_simulation}
+                                            onChange={(e) => updateServerSetting('parity', (e.target.value || 'N') as 'N' | 'E' | 'O')}
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                        >
+                                            <option value="N">None (N)</option>
+                                            <option value="E">Even (E)</option>
+                                            <option value="O">Odd (O)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">Frame</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input
+                                                type="number"
+                                                value={serverSettings.byte_size || 8}
+                                                disabled={!isEditing || serverSettings.use_simulation}
+                                                onChange={(e) => updateServerSetting('byte_size', parseInt(e.target.value, 10) || 8)}
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                                title="Byte size"
+                                            />
+                                            <input
+                                                type="number"
+                                                value={serverSettings.stop_bits || 1}
+                                                disabled={!isEditing || serverSettings.use_simulation}
+                                                onChange={(e) => updateServerSetting('stop_bits', parseInt(e.target.value, 10) || 1)}
+                                                className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                                title="Stop bits"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">IP Address</label>
+                                        <input
+                                            type="text"
+                                            value={serverSettings.real_host || ''}
+                                            disabled={!isEditing || serverSettings.use_simulation}
+                                            onChange={(e) => updateServerSetting('real_host', e.target.value)}
+                                            placeholder="192.168.1.10"
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-slate-500 mb-1">Port</label>
+                                        <input
+                                            type="number"
+                                            value={serverSettings.real_port || 502}
+                                            disabled={!isEditing || serverSettings.use_simulation}
+                                            onChange={(e) => updateServerSetting('real_port', parseInt(e.target.value, 10) || 502)}
+                                            placeholder="502"
+                                            className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-cyan-500 disabled:opacity-50"
+                                        />
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
 

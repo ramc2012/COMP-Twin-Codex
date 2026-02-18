@@ -5,7 +5,7 @@ Modbus Config API - Manage register mappings and server configuration.
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Literal
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
@@ -113,6 +113,12 @@ class ModbusGlobalConfig(BaseModel):
     real_port: Optional[int] = None
     sim_host: str = "simulator"
     sim_port: int = 5020
+    communication_mode: Literal["TCP_IP", "RS485_RTU"] = "TCP_IP"
+    serial_port: Optional[str] = None
+    baud_rate: int = 9600
+    parity: Literal["N", "E", "O"] = "N"
+    stop_bits: int = 1
+    byte_size: int = 8
 
 
 class SimulationConfig(BaseModel):
@@ -184,7 +190,13 @@ async def get_modbus_config(
             "real_host": server_conf.real_host,
             "real_port": server_conf.real_port,
             "sim_host": server_conf.sim_host,
-            "sim_port": server_conf.sim_port
+            "sim_port": server_conf.sim_port,
+            "communication_mode": "TCP_IP",
+            "serial_port": None,
+            "baud_rate": 9600,
+            "parity": "N",
+            "stop_bits": 1,
+            "byte_size": 8
         }
     else:
         # Defaults
@@ -198,8 +210,44 @@ async def get_modbus_config(
             "real_host": "",
             "real_port": 502,
             "sim_host": "simulator",
-            "sim_port": 5020
+            "sim_port": 5020,
+            "communication_mode": "TCP_IP",
+            "serial_port": None,
+            "baud_rate": 9600,
+            "parity": "N",
+            "stop_bits": 1,
+            "byte_size": 8
         }
+
+    # Overlay per-unit server override (transport-specific settings are persisted here).
+    override_cfg = _load_unit_override(unit_id)
+    server_override = override_cfg.get("server") if isinstance(override_cfg, dict) else None
+    if isinstance(server_override, dict):
+        server_data = {
+            **server_data,
+            "slave_id": server_override.get("slave_id", server_data.get("slave_id", 1)),
+            "use_simulation": bool(server_override.get("use_simulation", server_data.get("use_simulation", True))),
+            "real_host": server_override.get("real_host", server_data.get("real_host", "")),
+            "real_port": server_override.get("real_port", server_data.get("real_port", 502)),
+            "sim_host": server_override.get("sim_host", server_data.get("sim_host", "simulator")),
+            "sim_port": server_override.get("sim_port", server_data.get("sim_port", 5020)),
+            "communication_mode": str(server_override.get("communication_mode", server_data.get("communication_mode", "TCP_IP"))).upper(),
+            "serial_port": server_override.get("serial_port", server_data.get("serial_port")),
+            "baud_rate": int(server_override.get("baud_rate", server_data.get("baud_rate", 9600)) or 9600),
+            "parity": str(server_override.get("parity", server_data.get("parity", "N"))).upper(),
+            "stop_bits": int(server_override.get("stop_bits", server_data.get("stop_bits", 1)) or 1),
+            "byte_size": int(server_override.get("byte_size", server_data.get("byte_size", 8)) or 8),
+        }
+
+    if server_data.get("use_simulation"):
+        server_data["host"] = server_data.get("sim_host") or "simulator"
+        server_data["port"] = int(server_data.get("sim_port") or 5020)
+    elif server_data.get("communication_mode") == "RS485_RTU":
+        server_data["host"] = server_data.get("serial_port") or "/dev/ttyUSB0"
+        server_data["port"] = 0
+    else:
+        server_data["host"] = server_data.get("real_host") or ""
+        server_data["port"] = int(server_data.get("real_port") or 502)
 
     yaml_by_address = {}
     yaml_by_name = {}
@@ -217,28 +265,9 @@ async def get_modbus_config(
     # Any per-package override YAML values (and DB calibration values) are layered on top.
     if unit_id in UNIT_TEMPLATE_MAP_PATHS:
         template_registers = _load_template_registers(unit_id)
-        override_cfg = _load_unit_override(unit_id)
         override_registers = override_cfg.get("registers", []) if isinstance(override_cfg, dict) else []
-        server_override = override_cfg.get("server") if isinstance(override_cfg, dict) else None
 
         if template_registers:
-            if isinstance(server_override, dict):
-                server_data = {
-                    **server_data,
-                    "slave_id": server_override.get("slave_id", server_data.get("slave_id", 1)),
-                    "use_simulation": bool(server_override.get("use_simulation", server_data.get("use_simulation", True))),
-                    "real_host": server_override.get("real_host", server_data.get("real_host", "")),
-                    "real_port": server_override.get("real_port", server_data.get("real_port", 502)),
-                    "sim_host": server_override.get("sim_host", server_data.get("sim_host", "simulator")),
-                    "sim_port": server_override.get("sim_port", server_data.get("sim_port", 5020)),
-                }
-                if server_data.get("use_simulation"):
-                    server_data["host"] = server_data.get("sim_host") or "simulator"
-                    server_data["port"] = int(server_data.get("sim_port") or 5020)
-                else:
-                    server_data["host"] = server_data.get("real_host") or ""
-                    server_data["port"] = int(server_data.get("real_port") or 502)
-
             # Optional simulation override stored per unit.
             simulation_override = override_cfg.get("simulation") if isinstance(override_cfg, dict) else None
             if isinstance(simulation_override, dict):
@@ -434,8 +463,12 @@ async def update_modbus_config(
                 server_conf.host = server_conf.sim_host
                 server_conf.port = server_conf.sim_port
             else:
-                server_conf.host = server_conf.real_host if server_conf.real_host else "0.0.0.0"
-                server_conf.port = server_conf.real_port if server_conf.real_port else 502
+                if config.server.communication_mode == "RS485_RTU":
+                    server_conf.host = config.server.serial_port or "/dev/ttyUSB0"
+                    server_conf.port = 0
+                else:
+                    server_conf.host = server_conf.real_host if server_conf.real_host else "0.0.0.0"
+                    server_conf.port = server_conf.real_port if server_conf.real_port else 502
 
         # 2. Update Registers if provided
         if config.registers is not None:
@@ -484,6 +517,12 @@ async def update_modbus_config(
                 "real_port": config.server.real_port,
                 "sim_host": config.server.sim_host,
                 "sim_port": config.server.sim_port,
+                "communication_mode": config.server.communication_mode,
+                "serial_port": config.server.serial_port,
+                "baud_rate": config.server.baud_rate,
+                "parity": config.server.parity,
+                "stop_bits": config.server.stop_bits,
+                "byte_size": config.server.byte_size,
             }
         if config.simulation:
             unit_override_payload["simulation"] = {
@@ -535,7 +574,17 @@ async def update_modbus_config(
             server_sec = full_config.get("server", {})
             if config.server:
                 server_sec["slave_id"] = config.server.slave_id
-                # We don't change host/port here because Simulator always runs in its container
+                server_sec["use_simulation"] = config.server.use_simulation
+                server_sec["real_host"] = config.server.real_host
+                server_sec["real_port"] = config.server.real_port
+                server_sec["sim_host"] = config.server.sim_host
+                server_sec["sim_port"] = config.server.sim_port
+                server_sec["communication_mode"] = config.server.communication_mode
+                server_sec["serial_port"] = config.server.serial_port
+                server_sec["baud_rate"] = config.server.baud_rate
+                server_sec["parity"] = config.server.parity
+                server_sec["stop_bits"] = config.server.stop_bits
+                server_sec["byte_size"] = config.server.byte_size
             full_config["server"] = server_sec
 
             # Update Registers

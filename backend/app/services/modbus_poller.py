@@ -11,6 +11,7 @@ import re
 from typing import Dict, Any, Optional, List, Callable, Awaitable
 from datetime import datetime
 from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.client import AsyncModbusSerialClient
 from pymodbus.exceptions import ModbusException
 import yaml
 from pathlib import Path
@@ -101,6 +102,12 @@ class ModbusPoller:
         self.slave_id = slave_id or settings.MODBUS_SLAVE_ID
         self.poll_interval = poll_interval_ms / 1000.0
         self.timeout = timeout
+        self.communication_mode = "TCP_IP"
+        self.serial_port = "/dev/ttyUSB0"
+        self.baud_rate = 9600
+        self.parity = "N"
+        self.stop_bits = 1
+        self.byte_size = 8
         
         self.client: Optional[AsyncModbusTcpClient] = None
         self.connected = False
@@ -125,6 +132,20 @@ class ModbusPoller:
         
         logger.info(f"ModbusPoller initialized: {self.host}:{self.port} (slave {self.slave_id})")
         logger.info(f"Loaded {len(self.register_config)} registers (A:{len(self.group_a_registers)}, B:{len(self.group_b_registers)})")
+
+    def _load_server_override(self, unit_id: str) -> Dict[str, Any]:
+        """Load per-unit server override settings from YAML."""
+        for base in (Path("/app/shared_config/modbus_by_unit"), Path("shared_config/modbus_by_unit")):
+            path = base / f"{unit_id}.yaml"
+            if not path.exists():
+                continue
+            try:
+                payload = yaml.safe_load(path.read_text()) or {}
+                server = payload.get("server", {})
+                return server if isinstance(server, dict) else {}
+            except Exception:
+                continue
+        return {}
 
     def _categorize_registers(self):
         """Separate registers into Group A (critical) and Group B (secondary)."""
@@ -192,38 +213,66 @@ class ModbusPoller:
 
                 # Prefer the primary package row; otherwise use the first available config.
                 conf = next((c for c in configs if c.unit_id == "GCS-001"), configs[0])
+                server_override = self._load_server_override(conf.unit_id)
+                configured_mode = str(server_override.get("communication_mode", "TCP_IP")).upper()
+                serial_port = str(server_override.get("serial_port") or self.serial_port).strip()
+                baud_rate = int(server_override.get("baud_rate", self.baud_rate) or self.baud_rate)
+                parity = str(server_override.get("parity", self.parity) or self.parity).upper()[:1]
+                stop_bits = int(server_override.get("stop_bits", self.stop_bits) or self.stop_bits)
+                byte_size = int(server_override.get("byte_size", self.byte_size) or self.byte_size)
+                if parity not in {"N", "E", "O"}:
+                    parity = "N"
 
                 if conf.use_simulation:
                     # Do not trust legacy host/port columns in simulation mode: they may still be 0.0.0.0:502.
                     new_host = conf.sim_host or conf.host or self.host
                     new_port = conf.sim_port or conf.port or self.port
+                    new_mode = "TCP_IP"
                 else:
-                    real_host = (conf.real_host or "").strip()
-                    real_port = conf.real_port or conf.port
-                    # Guard against invalid "real mode" placeholders that break dockerized simulator setups.
-                    if not real_host or real_host in {"0.0.0.0", "127.0.0.1", "localhost"}:
-                        logger.warning(
-                            "Real mode configured for %s but real_host is not usable (%s). Falling back to simulation endpoint.",
-                            conf.unit_id,
-                            real_host or "empty",
-                        )
-                        new_host = conf.sim_host or conf.host or self.host
-                        new_port = conf.sim_port or conf.port or self.port
+                    if configured_mode == "RS485_RTU":
+                        new_mode = "RS485_RTU"
+                        new_host = serial_port or self.serial_port
+                        new_port = 0
                     else:
-                        new_host = real_host
-                        new_port = real_port or self.port
+                        new_mode = "TCP_IP"
+                        real_host = (conf.real_host or "").strip()
+                        real_port = conf.real_port or conf.port
+                        # Guard against invalid "real mode" placeholders that break dockerized simulator setups.
+                        if not real_host or real_host in {"0.0.0.0", "127.0.0.1", "localhost"}:
+                            logger.warning(
+                                "Real mode configured for %s but real_host is not usable (%s). Falling back to simulation endpoint.",
+                                conf.unit_id,
+                                real_host or "empty",
+                            )
+                            new_host = conf.sim_host or conf.host or self.host
+                            new_port = conf.sim_port or conf.port or self.port
+                        else:
+                            new_host = real_host
+                            new_port = real_port or self.port
 
                 new_slave = conf.slave_id or self.slave_id
                 new_host = str(new_host).strip() if new_host else self.host
-                new_port = int(new_port) if new_port else self.port
+                new_port = int(new_port) if new_port is not None else self.port
 
                 # Log if changing
-                if new_host != self.host or new_port != self.port or new_slave != self.slave_id:
+                connection_changed = (
+                    new_host != self.host
+                    or new_port != self.port
+                    or new_slave != self.slave_id
+                    or new_mode != self.communication_mode
+                    or serial_port != self.serial_port
+                    or baud_rate != self.baud_rate
+                    or parity != self.parity
+                    or stop_bits != self.stop_bits
+                    or byte_size != self.byte_size
+                )
+                if connection_changed:
                     mode = "simulation" if conf.use_simulation else "real"
                     logger.info(
-                        "Connection settings changed for %s (%s mode): %s:%s -> %s:%s",
+                        "Connection settings changed for %s (%s, %s): %s:%s -> %s:%s",
                         conf.unit_id,
                         mode,
+                        new_mode,
                         self.host,
                         self.port,
                         new_host,
@@ -232,6 +281,12 @@ class ModbusPoller:
                     self.host = new_host
                     self.port = new_port
                     self.slave_id = new_slave
+                    self.communication_mode = new_mode
+                    self.serial_port = serial_port
+                    self.baud_rate = baud_rate
+                    self.parity = parity
+                    self.stop_bits = stop_bits
+                    self.byte_size = byte_size
 
                     # Trigger reconnect
                     await self.disconnect()
@@ -258,11 +313,31 @@ class ModbusPoller:
              await self._update_connection_settings()
 
         try:
-            self.client = AsyncModbusTcpClient(host=self.host, port=self.port, timeout=self.timeout)
+            if self.communication_mode == "RS485_RTU":
+                self.client = AsyncModbusSerialClient(
+                    port=self.serial_port,
+                    baudrate=self.baud_rate,
+                    bytesize=self.byte_size,
+                    parity=self.parity,
+                    stopbits=self.stop_bits,
+                    timeout=self.timeout,
+                )
+            else:
+                self.client = AsyncModbusTcpClient(host=self.host, port=self.port, timeout=self.timeout)
             await self.client.connect()
             self.connected = self.client.connected
             if self.connected:
-                logger.info(f"Connected to Modbus device at {self.host}:{self.port}")
+                if self.communication_mode == "RS485_RTU":
+                    logger.info(
+                        "Connected to Modbus RS485 device at %s (%s bps, %s%s%s)",
+                        self.serial_port,
+                        self.baud_rate,
+                        self.byte_size,
+                        self.parity,
+                        self.stop_bits,
+                    )
+                else:
+                    logger.info(f"Connected to Modbus device at {self.host}:{self.port}")
             return self.connected
         except Exception as e:
             logger.error(f"Connection error: {e}")
@@ -467,6 +542,12 @@ class ModbusPoller:
             "registers_cached": len(self.last_values),
             "group_a_count": len(self.group_a_registers),
             "group_b_count": len(self.group_b_registers),
+            "communication_mode": self.communication_mode,
+            "serial_port": self.serial_port,
+            "baud_rate": self.baud_rate,
+            "parity": self.parity,
+            "stop_bits": self.stop_bits,
+            "byte_size": self.byte_size,
         }
         status.update(self.latency_monitor.get_stats())
         return status
