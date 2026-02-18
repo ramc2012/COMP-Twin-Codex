@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useUnit } from '../contexts/UnitContext';
 import { fetchUnit, updateUnit } from '../lib/api';
 
@@ -55,7 +55,8 @@ const CONFIG_SECTIONS = [
 ];
 
 export function ConfigPage() {
-    const { unitId, activeUnit, refreshUnits } = useUnit();
+    const { unitId, activeUnit, units, loading, refreshUnits, pollIntervalMs, setPollIntervalMs } = useUnit();
+    const navigate = useNavigate();
     const [name, setName] = useState('');
     const [tag, setTag] = useState('');
     const [editingIdentity, setEditingIdentity] = useState(false);
@@ -124,6 +125,65 @@ export function ConfigPage() {
                 <p className="text-slate-400 mt-1">
                     Package configuration sections for <span className="text-slate-200 font-semibold">{unitId}</span>.
                 </p>
+            </div>
+
+            <div className="mb-6 rounded-xl border border-slate-700/60 bg-slate-900/45 p-4">
+                <div className="text-sm font-semibold text-slate-200 mb-3">Package Tabs</div>
+                {loading ? (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <div className="h-12 rounded-lg bg-slate-800/60 animate-pulse" />
+                        <div className="h-12 rounded-lg bg-slate-800/60 animate-pulse" />
+                        <div className="h-12 rounded-lg bg-slate-800/60 animate-pulse" />
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        {units.map((pkg, index) => {
+                            const active = pkg.unit_id === unitId;
+                            return (
+                                <button
+                                    key={pkg.unit_id}
+                                    type="button"
+                                    onClick={() => navigate(`/packages/${pkg.unit_id}/config`)}
+                                    className={`rounded-lg border px-3 py-2 text-left transition-all ${
+                                        active
+                                            ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200'
+                                            : 'border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-500'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-semibold">{`Package ${index + 1}`}</span>
+                                        <span className={`text-[10px] ${pkg.is_active ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                            {pkg.is_active ? 'ACTIVE' : 'OFFLINE'}
+                                        </span>
+                                    </div>
+                                    <div className="text-sm font-medium mt-0.5">{pkg.unit_id}</div>
+                                    <div className="text-[11px] opacity-80 truncate">{pkg.name || '-'}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            <div className="mb-6 rounded-xl border border-slate-700/60 bg-slate-900/45 p-4">
+                <h2 className="text-lg font-semibold text-slate-100 mb-3">App Polling</h2>
+                <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-3 items-center">
+                    <select
+                        value={String(pollIntervalMs)}
+                        onChange={(e) => setPollIntervalMs(Number(e.target.value))}
+                        className="w-full rounded border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:outline-none focus:border-cyan-500"
+                    >
+                        <option value="1000">1 second</option>
+                        <option value="2000">2 seconds (Default)</option>
+                        <option value="5000">5 seconds</option>
+                        <option value="10000">10 seconds</option>
+                        <option value="15000">15 seconds</option>
+                        <option value="30000">30 seconds</option>
+                    </select>
+                    <div className="text-xs text-slate-400">
+                        Controls refresh interval across dashboard views. Current: <span className="text-slate-200">{pollIntervalMs / 1000}s</span>
+                    </div>
+                </div>
             </div>
 
             <div className="mb-6 rounded-xl border border-slate-700/60 bg-slate-900/45 p-4">
